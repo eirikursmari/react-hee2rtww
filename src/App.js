@@ -2,6 +2,7 @@ import React, { useState, useCallback } from "react";
 import "./style.css";
 
 const RC_SEARCH_URL = "https://www.researchcatalogue.net/portal/search-result";
+const CORS_PROXY = "https://corsproxy.io/?";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 
@@ -12,6 +13,11 @@ function normalizeResults(data) {
   return [];
 }
 
+function isCorsError(e) {
+  return ["Failed to fetch", "NetworkError", "Load failed", "Network request failed"]
+    .some(msg => e.message.includes(msg));
+}
+
 async function fetchExpositions(query, page = 0) {
   const params = new URLSearchParams({
     fulltext: query,
@@ -20,7 +26,17 @@ async function fetchExpositions(query, page = 0) {
     format: "json",
     page: String(page),
   });
-  const res = await fetch(`${RC_SEARCH_URL}?${params}`);
+  const targetUrl = `${RC_SEARCH_URL}?${params}`;
+
+  // Try direct first, fall back to CORS proxy
+  let res;
+  try {
+    res = await fetch(targetUrl);
+  } catch (e) {
+    if (!isCorsError(e)) throw e;
+    res = await fetch(`${CORS_PROXY}${encodeURIComponent(targetUrl)}`);
+  }
+
   if (!res.ok) throw new Error(`Search returned ${res.status}`);
   return normalizeResults(await res.json());
 }
@@ -181,12 +197,7 @@ export default function App() {
       results = await fetchExpositions(q);
       setExpositions(results);
     } catch (e) {
-      const isCors = e.message.includes("Failed to fetch") || e.message.includes("NetworkError") || e.message.includes("CORS");
-      setSearchError(
-        isCors
-          ? "Could not reach the Research Catalogue API — likely a CORS restriction. To use this app you may need a backend proxy or a browser extension that allows cross-origin requests."
-          : e.message
-      );
+      setSearchError(e.message);
       setSearchLoading(false);
       return;
     }
