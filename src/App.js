@@ -1,259 +1,323 @@
-import React from "react";
+import React, { useState, useCallback } from "react";
 import "./style.css";
 
-export default function App() {
-  return (
-    <div>
-      <h1>Hello StackBlitz!</h1>
-      <p>Start editing to see some magic happen :)</p>
-    </div>
-  );
+const RC_SEARCH_URL = "https://www.researchcatalogue.net/portal/search-result";
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const CLAUDE_MODEL = "claude-sonnet-4-6";
+
+function normalizeResults(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.expositions)) return data.expositions;
+  if (data && Array.isArray(data.results)) return data.results;
+  return [];
 }
-import { useState } from "react";
 
-const mannNodes = [
-  { id: "person", label: "Manneskja", sub: "Miðpunkturinn", x: 50, y: 50, size: 52, main: true },
-  { id: "census", label: "Manntöl", sub: "1703–1920", x: 50, y: 14, size: 38 },
-  { id: "smb", label: "SMB", sub: "Sögulegt mann- og bæjatal", x: 79, y: 28, size: 36 },
-  { id: "farm", label: "Bæir & Jarðir", sub: "Jarðabók 1702–14", x: 82, y: 57, size: 34 },
-  { id: "church", label: "Kirkjubækur", sub: "Skírn · Giftingar · Dauðar", x: 65, y: 80, size: 32 },
-  { id: "isl", label: "Íslendingabók", sub: "Ættfræðitenging", x: 35, y: 82, size: 34 },
-  { id: "geo", label: "Örnefni & Kort", sub: "GeoNames · staðsetning", x: 18, y: 60, size: 30 },
-  { id: "wikidata", label: "Wikidata", sub: "Alþjóðleg tenging", x: 16, y: 32, size: 28 },
-  { id: "kvenna", label: "Kvennaspor", sub: "Rannsóknarverkefni", x: 50, y: 33, size: 26, secondary: true },
-];
+async function fetchExpositions(query, page = 0) {
+  const params = new URLSearchParams({
+    fulltext: query,
+    statuses: "published",
+    type: "exposition",
+    format: "json",
+    page: String(page),
+  });
+  const res = await fetch(`${RC_SEARCH_URL}?${params}`);
+  if (!res.ok) throw new Error(`Search returned ${res.status}`);
+  return normalizeResults(await res.json());
+}
 
-const mannEdges = [
-  ["person", "census", "skráð í"],
-  ["person", "smb", "tengd með SMB"],
-  ["person", "church", "lífsatvik"],
-  ["person", "isl", "ættartenging"],
-  ["person", "farm", "bjó á"],
-  ["census", "smb", "grunnur"],
-  ["smb", "geo", "staðsetning"],
-  ["farm", "geo", "kortlagður"],
-  ["isl", "wikidata", "tengdur"],
-  ["person", "wikidata", "ef þekkt"],
-  ["smb", "kvenna", "innviður"],
-  ["census", "kvenna", "gögn"],
-];
+function getAuthorName(exp) {
+  const a = exp.author;
+  if (!a) return "Unknown";
+  if (typeof a === "string") return a;
+  if (a.name) return a.name;
+  if (a.firstName) return `${a.firstName} ${a.lastName || ""}`.trim();
+  return "Unknown";
+}
 
-const listaNodes = [
-  { id: "artwork", label: "Listaverk", sub: "Miðpunkturinn", x: 50, y: 50, size: 52, main: true },
-  { id: "artist", label: "Listamaður", sub: "Ævisaga · menntun", x: 50, y: 13, size: 40 },
-  { id: "museum", label: "Safneignin", sub: "LSÍ · LSR · LSA", x: 80, y: 27, size: 36 },
-  { id: "exhibition", label: "Sýningar", sub: "Sýningaskrár · dagsetningar", x: 84, y: 55, size: 34 },
-  { id: "photo", label: "Ljósmyndir", sub: "Sarpur · skjalasjóður", x: 65, y: 80, size: 30 },
-  { id: "press", label: "Fréttir & Gagnrýni", sub: "Tímarit.is · dagblöð", x: 36, y: 83, size: 32 },
-  { id: "poster", label: "Veggspjöld", sub: "Auglýsingarefni", x: 17, y: 62, size: 28 },
-  { id: "letters", label: "Bréf & Skjöl", sub: "Einkasamlagnir", x: 15, y: 35, size: 26 },
-  { id: "smb2", label: "ManntölSampo", sub: "Ævisögutengsl", x: 50, y: 32, size: 26, secondary: true },
-];
+function getKeywords(exp) {
+  const kw = exp.keywords;
+  if (!kw) return [];
+  if (Array.isArray(kw)) return kw;
+  if (typeof kw === "string") return kw.split(/[,;]+/).map(k => k.trim()).filter(Boolean);
+  return [];
+}
 
-const listaEdges = [
-  ["artwork", "artist", "búið til af"],
-  ["artwork", "museum", "varðveitt í"],
-  ["artwork", "exhibition", "sýnt á"],
-  ["artwork", "photo", "myndsett"],
-  ["artwork", "press", "gagnrýnt"],
-  ["artist", "letters", "skrifaði"],
-  ["artist", "smb2", "ævisögutengsl"],
-  ["exhibition", "poster", "kynnt með"],
-  ["exhibition", "press", "fjallað um"],
-  ["exhibition", "photo", "skráð með"],
-  ["museum", "exhibition", "hýsti"],
-  ["letters", "artwork", "lýsir"],
-];
+function buildRAGContext(expositions) {
+  return expositions.slice(0, 10).map((exp, i) => {
+    const author = getAuthorName(exp);
+    const kws = getKeywords(exp).slice(0, 8).join(", ");
+    const abs = (exp.abstract || exp.description || "").slice(0, 400);
+    const id = exp.id || "";
+    const pageId = exp["default-page"]?.id || "";
+    return [
+      `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
+      exp.created ? `Published: ${exp.created}` : "",
+      kws ? `Keywords: ${kws}` : "",
+      abs ? `Abstract: ${abs}${abs.length === 400 ? "…" : ""}` : "",
+      `URL: https://www.researchcatalogue.net/view/${id}/${pageId}`,
+    ].filter(Boolean).join("\n");
+  }).join("\n\n---\n\n");
+}
 
-const theme = {
-  bg: "#ffffff",
-  font: "Georgia, serif",
-  titleColor: "#000000",
-  mainFill: "#000000",
-  mainStroke: "#000000",
-  mainText: "#ffffff",
-  nodeFill: "#ffffff",
-  nodeStroke: "#000000",
-  nodeText: "#000000",
-  secFill: "#f0f0f0",
-  secStroke: "#000000",
-  subText: "#444444",
-  edge: "#000000",
-  edgeActive: "#000000",
-  panelBg: "rgba(255,255,255,0.95)",
-  panelBorder: "#000000",
-};
+async function generateRAGAnswer(apiKey, query, context) {
+  const res = await fetch(CLAUDE_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: 1024,
+      system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research. You help users discover and understand artistic research expositions.
 
-function SampoGraph({ nodes, edges, title, description }) {
-  const [hovered, setHovered] = useState(null);
-  const [selected, setSelected] = useState(null);
+When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant. Focus on what the expositions reveal about the query topic.`,
+      messages: [{
+        role: "user",
+        content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
+      }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Claude API error (${res.status})`);
+  }
+  const data = await res.json();
+  return data.content?.[0]?.text || "";
+}
 
-  const connected = hovered
-    ? new Set(edges.flatMap(e => e[0] === hovered || e[1] === hovered ? [e[0], e[1]] : []))
-    : new Set();
-
-  const activeNode = selected
-    ? nodes.find(n => n.id === selected)
-    : nodes.find(n => n.main);
-
-  const activeEdges = activeNode
-    ? edges.filter(e => e[0] === activeNode.id || e[1] === activeNode.id)
-    : [];
+function ExpositionCard({ exp, index }) {
+  const author = getAuthorName(exp);
+  const keywords = getKeywords(exp);
+  const abstract = exp.abstract || exp.description || "";
+  const id = exp.id || "";
+  const pageId = exp["default-page"]?.id || "";
+  const url = `https://www.researchcatalogue.net/view/${id}/${pageId}`;
+  const thumb = exp.thumbnail || exp["default-page"]?.screenshot;
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      {/* Title */}
-      <div style={{ position: "absolute", top: 18, left: 22, zIndex: 10, fontFamily: theme.font }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: theme.titleColor, letterSpacing: "-0.02em", lineHeight: 1 }}>
-          {title}
-        </div>
-        <div style={{ fontSize: 11, color: theme.titleColor, opacity: 0.5, marginTop: 5, maxWidth: 240 }}>
-          {description}
-        </div>
-      </div>
-
-      {/* Info panel */}
-      {activeNode && (
-        <div style={{
-          position: "absolute", bottom: 18, right: 18, zIndex: 10,
-          background: theme.panelBg,
-          border: `1px solid ${theme.panelBorder}`,
-          borderRadius: 6, padding: "10px 14px", maxWidth: 210,
-          fontFamily: theme.font,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: theme.titleColor }}>{activeNode.label}</div>
-          <div style={{ fontSize: 10, color: theme.titleColor, opacity: 0.55, marginTop: 3 }}>{activeNode.sub}</div>
-          <div style={{ fontSize: 9, color: theme.titleColor, opacity: 0.45, marginTop: 8, lineHeight: 1.7 }}>
-            {activeEdges.map((e, i) => {
-              const otherId = e[0] === activeNode.id ? e[1] : e[0];
-              const other = nodes.find(n => n.id === otherId);
-              const rel = e[0] === activeNode.id ? `→ ${e[2]}` : `← ${e[2]}`;
-              return <div key={i}>{rel}: <strong>{other?.label}</strong></div>;
-            })}
-          </div>
+    <article className="exp-card">
+      <span className="exp-index">[{index + 1}]</span>
+      {thumb && (
+        <div className="exp-thumb-wrap">
+          <img className="exp-thumb" src={thumb} alt="" loading="lazy" />
         </div>
       )}
-
-      <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-        {/* Edges */}
-        {edges.map((edge, i) => {
-          const from = nodes.find(n => n.id === edge[0]);
-          const to = nodes.find(n => n.id === edge[1]);
-          if (!from || !to) return null;
-          const isActive = hovered ? (edge[0] === hovered || edge[1] === hovered) : false;
-          const dim = hovered && !isActive;
-          return (
-            <line key={i}
-              x1={`${from.x}%`} y1={`${from.y}%`}
-              x2={`${to.x}%`} y2={`${to.y}%`}
-              stroke={theme.edge}
-              strokeWidth={isActive ? 2 : 1}
-              strokeDasharray={isActive ? "none" : "5 4"}
-              style={{ opacity: dim ? 0.08 : isActive ? 1 : 0.3, transition: "opacity 0.25s" }}
-            />
-          );
-        })}
-
-        {/* Nodes */}
-        {nodes.map(node => {
-          const isHov = hovered === node.id;
-          const isCon = connected.has(node.id);
-          const dim = hovered && !isHov && !isCon;
-          const fill = node.main ? theme.mainFill : node.secondary ? theme.secFill : theme.nodeFill;
-          const stroke = theme.nodeStroke;
-          const textCol = node.main ? theme.mainText : theme.nodeText;
-          return (
-            <g key={node.id}
-              style={{ cursor: "pointer", opacity: dim ? 0.15 : 1, transition: "opacity 0.25s" }}
-              onClick={() => setSelected(selected === node.id ? null : node.id)}
-              onMouseEnter={() => setHovered(node.id)}
-              onMouseLeave={() => setHovered(null)}
-            >
-              <circle
-                cx={`${node.x}%`} cy={`${node.y}%`}
-                r={node.size / 2 + (isHov ? 3 : 0)}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={node.main ? 2.5 : isHov ? 2.5 : 1.5}
-                style={{ transition: "r 0.2s" }}
-              />
-              <text
-                x={`${node.x}%`} y={`${node.y}%`}
-                textAnchor="middle" dy="-3"
-                fontSize={node.main ? 11 : 9}
-                fontWeight="700"
-                fill={textCol}
-                fontFamily={theme.font}
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >{node.label}</text>
-              <text
-                x={`${node.x}%`} y={`${node.y}%`}
-                textAnchor="middle" dy="9"
-                fontSize={6.5}
-                fill={node.main ? "#ffffff" : theme.subText}
-                fontFamily={theme.font}
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >{node.sub}</text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Hint */}
-      <div style={{
-        position: "absolute", bottom: 18, left: 22,
-        fontSize: 10, fontFamily: theme.font,
-        color: theme.titleColor, opacity: 0.3,
-      }}>
-        Haltu yfir hnút · Smelltu til að læsa
+      <div className="exp-body">
+        <a className="exp-title" href={url} target="_blank" rel="noopener noreferrer">
+          {exp.title || "Untitled"}
+        </a>
+        <div className="exp-meta">
+          {author}
+          {exp.created && <> · <time>{exp.created}</time></>}
+        </div>
+        {abstract && (
+          <p className="exp-abstract">
+            {abstract.length > 240 ? abstract.slice(0, 240) + "…" : abstract}
+          </p>
+        )}
+        {keywords.length > 0 && (
+          <div className="exp-keywords">
+            {keywords.slice(0, 7).map((kw, i) => (
+              <span className="kw-tag" key={i}>{kw}</span>
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </article>
   );
 }
 
+function AnswerPanel({ answer, loading, error }) {
+  if (!loading && !error && !answer) return null;
+  return (
+    <section className="answer-section">
+      <h2 className="section-label">AI Answer</h2>
+      {loading && <p className="answer-loading">Generating answer…</p>}
+      {error && <p className="answer-error">{error}</p>}
+      {answer && <div className="answer-body">{answer}</div>}
+    </section>
+  );
+}
+
+const EXAMPLE_QUERIES = [
+  "artistic practice as research",
+  "sound art and performance",
+  "material culture and craft",
+  "digital and interactive art",
+];
+
 export default function App() {
-  const [active, setActive] = useState(0);
+  const [query, setQuery] = useState("");
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("rc_claude_key") || "");
+  const [showSettings, setShowSettings] = useState(false);
 
-  const graphs = [
-    {
-      nodes: mannNodes, edges: mannEdges,
-      title: "Manntöl",
-      description: "Tenging manntalsgagna 1703–1920 við sögulegar heimildir"
-    },
-    {
-      nodes: listaNodes, edges: listaEdges,
-      title: "Listir",
-      description: "Tenging listaverka við menningarlegt samhengi"
-    },
-  ];
+  const [expositions, setExpositions] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
-  const g = graphs[active];
+  const [answer, setAnswer] = useState("");
+  const [answerLoading, setAnswerLoading] = useState(false);
+  const [answerError, setAnswerError] = useState("");
+
+  const saveKey = (key) => {
+    setApiKey(key);
+    if (key) localStorage.setItem("rc_claude_key", key);
+    else localStorage.removeItem("rc_claude_key");
+  };
+
+  const runSearch = useCallback(async (q) => {
+    if (!q.trim()) return;
+    setSearchLoading(true);
+    setSearchError("");
+    setAnswer("");
+    setAnswerError("");
+    setExpositions([]);
+
+    let results = [];
+    try {
+      results = await fetchExpositions(q);
+      setExpositions(results);
+    } catch (e) {
+      const isCors = e.message.includes("Failed to fetch") || e.message.includes("NetworkError") || e.message.includes("CORS");
+      setSearchError(
+        isCors
+          ? "Could not reach the Research Catalogue API — likely a CORS restriction. To use this app you may need a backend proxy or a browser extension that allows cross-origin requests."
+          : e.message
+      );
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(false);
+
+    if (apiKey && results.length > 0) {
+      setAnswerLoading(true);
+      try {
+        const context = buildRAGContext(results);
+        const ans = await generateRAGAnswer(apiKey, q, context);
+        setAnswer(ans);
+      } catch (e) {
+        setAnswerError(e.message);
+      } finally {
+        setAnswerLoading(false);
+      }
+    }
+  }, [apiKey]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    runSearch(query);
+  };
 
   return (
-    <div style={{
-      width: "100vw", height: "100vh", overflow: "hidden",
-      background: "#ffffff",
-      fontFamily: theme.font,
-    }}>
-      {/* Tabs */}
-      <div style={{ position: "absolute", top: 18, right: 18, zIndex: 20, display: "flex", gap: 8 }}>
-        {graphs.map((gr, i) => (
-          <button key={i} onClick={() => setActive(i)} style={{
-            padding: "6px 14px",
-            fontFamily: theme.font,
-            fontSize: 12,
-            fontWeight: active === i ? 700 : 400,
-            background: active === i ? "#000000" : "#ffffff",
-            color: active === i ? "#ffffff" : "#000000",
-            border: "1px solid #000000",
-            borderRadius: 4,
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}>{gr.title}</button>
-        ))}
-      </div>
+    <div className="app">
+      <header className="app-header">
+        <div className="app-logo">RC</div>
+        <div className="header-text">
+          <h1 className="app-title">Research Catalogue · RAG Interface</h1>
+          <p className="app-subtitle">
+            Search and query artistic research expositions with AI-assisted retrieval
+          </p>
+        </div>
+      </header>
 
-      <SampoGraph key={active} {...g} />
+      <main className="app-main">
+        <form onSubmit={handleSubmit} className="search-form">
+          <input
+            className="search-input"
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Ask a question or search artistic research…"
+            disabled={searchLoading}
+            autoFocus
+          />
+          <button className="search-btn" type="submit" disabled={searchLoading || !query.trim()}>
+            {searchLoading ? "…" : "Search"}
+          </button>
+          <button
+            type="button"
+            className={`settings-toggle${showSettings ? " active" : ""}`}
+            onClick={() => setShowSettings(s => !s)}
+            title="API settings"
+          >
+            ⚙
+          </button>
+        </form>
+
+        {showSettings && (
+          <div className="settings-panel">
+            <label className="settings-label">
+              Anthropic API Key <span className="settings-hint">(enables AI-generated answers)</span>
+            </label>
+            <input
+              className="settings-input"
+              type="password"
+              value={apiKey}
+              onChange={e => saveKey(e.target.value)}
+              placeholder="sk-ant-api03-…"
+              spellCheck={false}
+            />
+            <p className="settings-note">
+              Stored only in your browser's local storage. Without a key, search results are still displayed — just without AI synthesis.
+            </p>
+          </div>
+        )}
+
+        {searchError && <div className="search-error">{searchError}</div>}
+
+        <AnswerPanel answer={answer} loading={answerLoading} error={answerError} />
+
+        {expositions !== null && !searchLoading && (
+          <section className="results-section">
+            <h2 className="section-label">
+              {expositions.length === 0
+                ? "No results found"
+                : `${expositions.length} exposition${expositions.length !== 1 ? "s" : ""} retrieved`}
+            </h2>
+            <div className="results-list">
+              {expositions.map((exp, i) => (
+                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {expositions === null && !searchLoading && (
+          <div className="landing">
+            <p className="landing-lead">
+              Query thousands of artistic research expositions from the{" "}
+              <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">
+                Research Catalogue
+              </a>
+              .
+            </p>
+            <p className="landing-sub">Try one of these:</p>
+            <div className="example-list">
+              {EXAMPLE_QUERIES.map(q => (
+                <button key={q} className="example-btn" onClick={() => { setQuery(q); runSearch(q); }}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      <footer className="app-footer">
+        Data:{" "}
+        <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">
+          Research Catalogue
+        </a>
+        {" · "}
+        <a href="https://rcdata.org" target="_blank" rel="noopener noreferrer">
+          RCData
+        </a>
+        {" · "}
+        Society for Artistic Research
+      </footer>
     </div>
   );
 }
