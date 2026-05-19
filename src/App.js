@@ -63,14 +63,12 @@ function buildRAGContext(expositions) {
     const author = getAuthorName(exp);
     const kws = getKeywords(exp).slice(0, 8).join(", ");
     const abs = (exp.abstract || exp.description || "").slice(0, 400);
-    const id = exp.id || "";
-    const pageId = exp["default-page"]?.id || "";
     return [
       `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
       exp.created ? `Published: ${exp.created}` : "",
       kws ? `Keywords: ${kws}` : "",
       abs ? `Abstract: ${abs}${abs.length === 400 ? "…" : ""}` : "",
-      `URL: https://www.researchcatalogue.net/view/${id}/${pageId}`,
+      `URL: ${getExpositionUrl(exp)}`,
     ].filter(Boolean).join("\n");
   }).join("\n\n---\n\n");
 }
@@ -104,14 +102,23 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
   return data.content?.[0]?.text || "";
 }
 
+function getExpositionUrl(exp) {
+  // Use any direct URL field the API provides
+  if (exp.url) return exp.url;
+  if (exp["exposition-url"]) return exp["exposition-url"];
+  const id = exp.id || "";
+  const pageId = exp["default-page"]?.id || exp.defaultPage?.id || exp["default_page"]?.id || "";
+  if (id && pageId) return `https://www.researchcatalogue.net/view/${id}/${pageId}`;
+  if (id) return `https://www.researchcatalogue.net/view/${id}`;
+  return "https://www.researchcatalogue.net";
+}
+
 function ExpositionCard({ exp, index }) {
   const author = getAuthorName(exp);
   const keywords = getKeywords(exp);
   const abstract = exp.abstract || exp.description || "";
-  const id = exp.id || "";
-  const pageId = exp["default-page"]?.id || "";
-  const url = `https://www.researchcatalogue.net/view/${id}/${pageId}`;
-  const thumb = exp.thumbnail || exp["default-page"]?.screenshot;
+  const url = getExpositionUrl(exp);
+  const thumb = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
 
   return (
     <article className="exp-card">
@@ -195,6 +202,7 @@ export default function App() {
     let results = [];
     try {
       results = await fetchExpositions(q);
+      if (results.length > 0) console.log("RC API first result:", results[0]);
       setExpositions(results);
     } catch (e) {
       setSearchError(e.message);
