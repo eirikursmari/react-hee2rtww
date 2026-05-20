@@ -251,7 +251,11 @@ export default function App() {
     }
     setSearchLoading(false);
 
-    if (!apiKey || results.length === 0) return;
+    if (results.length === 0) return;
+    if (!apiKey) {
+      setAnswerError("No API key set — open ⚙ settings and enter your Anthropic API key to get AI-generated answers.");
+      return;
+    }
 
     setAnswerLoading(true);
     try {
