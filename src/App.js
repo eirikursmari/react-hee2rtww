@@ -1,20 +1,15 @@
 import React, { useState, useCallback } from "react";
 import "./style.css";
 
-const RC_SEARCH_URL = "https://www.researchcatalogue.net/portal/search-result";
+const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
 const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
-const CORS_PROXY = "https://corsproxy.io/?";
+const CORS_PROXY     = "https://corsproxy.io/?";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL = "claude-sonnet-4-6";
-const DEEP_SEARCH_LIMIT = 5;   // expositions to fetch full content for
-const DEEP_TEXT_LIMIT = 2500;  // chars of body text per exposition sent to Claude
+const CLAUDE_MODEL   = "claude-sonnet-4-6";
+const DEEP_LIMIT     = 5;     // expositions to fetch full content for (deep mode)
+const DEEP_TEXT_MAX  = 2500;  // chars of body text per exposition sent to Claude
 
-function normalizeResults(data) {
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.expositions)) return data.expositions;
-  if (data && Array.isArray(data.results)) return data.results;
-  return [];
-}
+// ── Network helpers ───────────────────────────────────────────────────────────
 
 function isCorsError(e) {
   return ["Failed to fetch", "NetworkError", "Load failed", "Network request failed"]
@@ -22,27 +17,40 @@ function isCorsError(e) {
 }
 
 async function proxiedFetch(url) {
-  let res;
   try {
-    res = await fetch(url);
+    return await fetch(url);
   } catch (e) {
     if (!isCorsError(e)) throw e;
-    res = await fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+    return fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
   }
-  return res;
 }
 
-async function fetchExpositions(query, page = 0) {
+// ── Search functions ──────────────────────────────────────────────────────────
+
+async function fetchKeywordResults(query) {
   const params = new URLSearchParams({
-    fulltext: query,
-    statuses: "published",
-    type: "exposition",
-    format: "json",
-    page: String(page),
+    fulltext: query, statuses: "published",
+    type: "exposition", format: "json", page: "0",
   });
   const res = await proxiedFetch(`${RC_SEARCH_URL}?${params}`);
-  if (!res.ok) throw new Error(`Search returned ${res.status}`);
-  return normalizeResults(await res.json());
+  if (!res.ok) throw new Error(`RC search returned ${res.status}`);
+  const data = await res.json();
+  if (Array.isArray(data)) return data;
+  return data.expositions ?? data.results ?? [];
+}
+
+async function fetchSemanticResults(apiUrl, query, limit = 10) {
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Semantic search returned ${res.status}`);
+  }
+  const data = await res.json();
+  return data.results ?? [];
 }
 
 async function fetchExpositionContent(id) {
@@ -50,6 +58,8 @@ async function fetchExpositionContent(id) {
   if (!res.ok) throw new Error(`Content fetch returned ${res.status}`);
   return res.json();
 }
+
+// ── Text helpers ──────────────────────────────────────────────────────────────
 
 function stripHtml(html) {
   if (!html) return "";
@@ -59,12 +69,19 @@ function stripHtml(html) {
 }
 
 function extractText(data) {
-  if (!data || !Array.isArray(data.tools)) return "";
-  return data.tools
-    .filter(t => t.tool_type === "tool-text" || t.tool_type === "tool-simpletext")
-    .map(t => stripHtml(t.content || ""))
-    .filter(Boolean)
-    .join("\n\n");
+  const pages = data?.pages ?? {};
+  const texts = [];
+  const items = typeof pages === "object" && !Array.isArray(pages)
+    ? Object.values(pages) : (Array.isArray(pages) ? pages : []);
+  for (const page of items) {
+    for (const type of ["tool-text", "tool-simpletext"]) {
+      for (const tool of page[type] ?? []) {
+        const t = stripHtml(tool.content ?? "");
+        if (t) texts.push(t);
+      }
+    }
+  }
+  return texts.join("\n\n");
 }
 
 function getAuthorName(exp) {
@@ -87,35 +104,39 @@ function getKeywords(exp) {
 function getExpositionUrl(exp) {
   if (exp.url) return exp.url;
   if (exp["exposition-url"]) return exp["exposition-url"];
-  const id = exp.id || "";
-  const pageId = exp["default-page"]?.id || exp.defaultPage?.id || exp["default_page"]?.id || "";
-  if (id && pageId) return `https://www.researchcatalogue.net/view/${id}/${pageId}`;
+  const id = exp.id ?? "";
+  const pid = exp["default-page"]?.id ?? exp.defaultPage?.id ?? exp["default_page"]?.id ?? "";
+  if (id && pid) return `https://www.researchcatalogue.net/view/${id}/${pid}`;
   if (id) return `https://www.researchcatalogue.net/view/${id}`;
   return "https://www.researchcatalogue.net";
 }
 
+// ── Context building for Claude ───────────────────────────────────────────────
+
 function buildContext(expositions, contentMap = {}) {
-  const deep = Object.keys(contentMap).length > 0;
-  const limit = deep ? DEEP_SEARCH_LIMIT : 10;
+  const limit = Object.keys(contentMap).length > 0 ? DEEP_LIMIT : 10;
   return expositions.slice(0, limit).map((exp, i) => {
-    const author = getAuthorName(exp);
-    const kws = getKeywords(exp).slice(0, 8).join(", ");
-    const abs = (exp.abstract || exp.description || "").slice(0, 300);
-    const bodyText = contentMap[exp.id] || "";
+    const author   = getAuthorName(exp);
+    const kws      = getKeywords(exp).slice(0, 8).join(", ");
+    const abs      = (exp.abstract || exp.description || "").slice(0, 300);
+    // semantic results carry a matchedText excerpt; deep search adds full content
+    const bodyText = contentMap[exp.id] || exp.matchedText || "";
     return [
       `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
       exp.created ? `Published: ${exp.created}` : "",
-      kws ? `Keywords: ${kws}` : "",
-      abs ? `Abstract: ${abs}` : "",
+      kws  ? `Keywords: ${kws}` : "",
+      abs  ? `Abstract: ${abs}` : "",
       bodyText
-        ? `Full content:\n${bodyText.slice(0, DEEP_TEXT_LIMIT)}${bodyText.length > DEEP_TEXT_LIMIT ? "…" : ""}`
+        ? `Relevant content:\n${bodyText.slice(0, DEEP_TEXT_MAX)}${bodyText.length > DEEP_TEXT_MAX ? "…" : ""}`
         : "",
       `URL: ${getExpositionUrl(exp)}`,
     ].filter(Boolean).join("\n");
   }).join("\n\n---\n\n");
 }
 
-async function generateRAGAnswer(apiKey, query, context, deep) {
+// ── Claude call ───────────────────────────────────────────────────────────────
+
+async function generateRAGAnswer(apiKey, query, context, isSemantic) {
   const res = await fetch(CLAUDE_API_URL, {
     method: "POST",
     headers: {
@@ -126,10 +147,10 @@ async function generateRAGAnswer(apiKey, query, context, deep) {
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: deep ? 2048 : 1024,
-      system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research. You help users discover and understand artistic research expositions.
+      max_tokens: 2048,
+      system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
 
-When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${deep ? " You have access to the full text content of each exposition — use it to give detailed, specific answers." : ""}`,
+When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${isSemantic ? " Results were retrieved by semantic similarity — you may find content beyond the abstract that speaks directly to the query." : ""}`,
       messages: [{
         role: "user",
         content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
@@ -140,16 +161,17 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || `Claude API error (${res.status})`);
   }
-  const data = await res.json();
-  return data.content?.[0]?.text || "";
+  return (await res.json()).content?.[0]?.text ?? "";
 }
 
-function ExpositionCard({ exp, index }) {
-  const author = getAuthorName(exp);
+// ── Components ────────────────────────────────────────────────────────────────
+
+function ExpositionCard({ exp, index, semantic }) {
+  const author   = getAuthorName(exp);
   const keywords = getKeywords(exp);
   const abstract = exp.abstract || exp.description || "";
-  const url = getExpositionUrl(exp);
-  const thumb = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
+  const url      = getExpositionUrl(exp);
+  const thumb    = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
 
   return (
     <article className="exp-card">
@@ -166,10 +188,23 @@ function ExpositionCard({ exp, index }) {
         <div className="exp-meta">
           {author}
           {exp.created && <> · <time>{exp.created}</time></>}
+          {semantic && exp.similarity != null && (
+            <span className="similarity-badge">
+              {Math.round(exp.similarity * 100)}% match
+            </span>
+          )}
         </div>
         {abstract && (
           <p className="exp-abstract">
             {abstract.length > 240 ? abstract.slice(0, 240) + "…" : abstract}
+          </p>
+        )}
+        {semantic && exp.matchedText && (
+          <p className="exp-matched">
+            <span className="matched-label">Matched: </span>
+            {exp.matchedText.length > 200
+              ? exp.matchedText.slice(0, 200) + "…"
+              : exp.matchedText}
           </p>
         )}
         {keywords.length > 0 && (
@@ -197,40 +232,39 @@ function AnswerPanel({ answer, loading, loadingMsg, error }) {
   );
 }
 
-const EXAMPLE_QUERIES = [
+const EXAMPLES = [
   "artistic practice as research",
   "sound art and performance",
   "material culture and craft",
   "digital and interactive art",
 ];
 
+// ── App ───────────────────────────────────────────────────────────────────────
+
 export default function App() {
-  const [query, setQuery] = useState("");
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("rc_claude_key") || "");
-  const [showSettings, setShowSettings] = useState(false);
-  const [deepSearch, setDeepSearch] = useState(() => localStorage.getItem("rc_deep_search") === "1");
+  const [query,       setQuery]       = useState("");
+  const [apiKey,      setApiKey]      = useState(() => localStorage.getItem("rc_claude_key")    || "");
+  const [semanticUrl, setSemanticUrl] = useState(() => localStorage.getItem("rc_semantic_url")  || "");
+  const [showSettings,setShowSettings]= useState(false);
+  const [deepSearch,  setDeepSearch]  = useState(() => localStorage.getItem("rc_deep_search") === "1");
 
-  const [expositions, setExpositions] = useState(null);
+  const [expositions,   setExpositions]   = useState(null);
+  const [isSemantic,    setIsSemantic]    = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
+  const [searchError,   setSearchError]   = useState("");
 
-  const [answer, setAnswer] = useState("");
-  const [answerLoading, setAnswerLoading] = useState(false);
-  const [answerError, setAnswerError] = useState("");
-  const [loadingMsg, setLoadingMsg] = useState("");
+  const [answer,       setAnswer]       = useState("");
+  const [answerLoading,setAnswerLoading] = useState(false);
+  const [answerError,  setAnswerError]   = useState("");
+  const [loadingMsg,   setLoadingMsg]    = useState("");
 
-  const saveKey = (key) => {
-    setApiKey(key);
-    if (key) localStorage.setItem("rc_claude_key", key);
-    else localStorage.removeItem("rc_claude_key");
+  const save = (key, setter, storageKey) => (val) => {
+    setter(val);
+    if (val) localStorage.setItem(storageKey, val);
+    else     localStorage.removeItem(storageKey);
   };
 
-  const toggleDeepSearch = (val) => {
-    setDeepSearch(val);
-    localStorage.setItem("rc_deep_search", val ? "1" : "");
-  };
-
-  const runSearch = useCallback(async (q, deep = deepSearch) => {
+  const runSearch = useCallback(async (q) => {
     if (!q.trim()) return;
     setSearchLoading(true);
     setSearchError("");
@@ -238,18 +272,30 @@ export default function App() {
     setAnswerError("");
     setLoadingMsg("");
     setExpositions([]);
+    setIsSemantic(false);
 
     let results = [];
+    let semantic = false;
+
     try {
-      results = await fetchExpositions(q);
-      if (results.length > 0) console.log("RC API first result:", results[0]);
+      if (semanticUrl) {
+        setLoadingMsg("Searching semantic index…");
+        results  = await fetchSemanticResults(semanticUrl, q);
+        semantic = true;
+      } else {
+        results = await fetchKeywordResults(q);
+      }
+      if (results.length > 0) console.log("First result:", results[0]);
       setExpositions(results);
+      setIsSemantic(semantic);
     } catch (e) {
       setSearchError(e.message);
       setSearchLoading(false);
+      setLoadingMsg("");
       return;
     }
     setSearchLoading(false);
+    setLoadingMsg("");
 
     if (results.length === 0) return;
     if (!apiKey) {
@@ -260,8 +306,10 @@ export default function App() {
     setAnswerLoading(true);
     try {
       let context;
-      if (deep && results.length > 0) {
-        const top = results.slice(0, DEEP_SEARCH_LIMIT);
+
+      if (!semantic && deepSearch) {
+        // Deep mode: fetch full JSON for top results from RC
+        const top = results.slice(0, DEEP_LIMIT);
         const contentMap = {};
         for (let i = 0; i < top.length; i++) {
           setLoadingMsg(`Reading full content: exposition ${i + 1} of ${top.length}…`);
@@ -272,14 +320,14 @@ export default function App() {
             console.warn(`Could not fetch content for ${top[i].id}:`, e.message);
           }
         }
-        setLoadingMsg("Generating answer…");
         context = buildContext(results, contentMap);
       } else {
-        setLoadingMsg("");
+        // Semantic mode already has matchedText; keyword mode uses abstracts
         context = buildContext(results);
       }
 
-      const ans = await generateRAGAnswer(apiKey, q, context, deep);
+      setLoadingMsg("Generating answer…");
+      const ans = await generateRAGAnswer(apiKey, q, context, semantic);
       setAnswer(ans);
     } catch (e) {
       setAnswerError(e.message);
@@ -287,12 +335,11 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, deepSearch]);
+  }, [apiKey, semanticUrl, deepSearch]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    runSearch(query);
-  };
+  const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
+
+  const usingSemanticIndex = !!semanticUrl;
 
   return (
     <div className="app">
@@ -317,29 +364,29 @@ export default function App() {
             disabled={searchLoading || answerLoading}
             autoFocus
           />
-          <button className="search-btn" type="submit" disabled={searchLoading || answerLoading || !query.trim()}>
+          <button className="search-btn" type="submit"
+            disabled={searchLoading || answerLoading || !query.trim()}>
             {searchLoading ? "…" : "Search"}
           </button>
-          <button
-            type="button"
+          <button type="button"
             className={`settings-toggle${showSettings ? " active" : ""}`}
             onClick={() => setShowSettings(s => !s)}
-            title="API settings"
-          >
+            title="Settings">
             ⚙
           </button>
         </form>
 
         <div className="search-options">
-          <label className="deep-toggle">
-            <input
-              type="checkbox"
-              checked={deepSearch}
-              onChange={e => toggleDeepSearch(e.target.checked)}
-            />
-            <span className="deep-label">Deep search</span>
-            <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
-          </label>
+          {usingSemanticIndex ? (
+            <span className="mode-badge mode-semantic">Semantic index active</span>
+          ) : (
+            <label className="deep-toggle">
+              <input type="checkbox" checked={deepSearch}
+                onChange={e => { setDeepSearch(e.target.checked); localStorage.setItem("rc_deep_search", e.target.checked ? "1" : ""); }} />
+              <span className="deep-label">Deep search</span>
+              <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
+            </label>
+          )}
         </div>
 
         {showSettings && (
@@ -347,28 +394,27 @@ export default function App() {
             <label className="settings-label">
               Anthropic API Key <span className="settings-hint">(enables AI-generated answers)</span>
             </label>
-            <input
-              className="settings-input"
-              type="password"
-              value={apiKey}
-              onChange={e => saveKey(e.target.value)}
-              placeholder="sk-ant-api03-…"
-              spellCheck={false}
-            />
+            <input className="settings-input" type="password" value={apiKey}
+              onChange={e => save("key", setApiKey, "rc_claude_key")(e.target.value)}
+              placeholder="sk-ant-api03-…" spellCheck={false} />
+
+            <label className="settings-label" style={{ marginTop: 16 }}>
+              Semantic Search API URL <span className="settings-hint">(optional — Vercel endpoint)</span>
+            </label>
+            <input className="settings-input" type="url" value={semanticUrl}
+              onChange={e => save("url", setSemanticUrl, "rc_semantic_url")(e.target.value)}
+              placeholder="https://your-project.vercel.app/api/search" spellCheck={false} />
             <p className="settings-note">
-              Stored only in your browser's local storage. Without a key, search results are still displayed — just without AI synthesis.
+              Leave blank to use RC keyword search. Once the semantic index is built and
+              deployed, paste the Vercel API URL here to enable full-text semantic search.
             </p>
           </div>
         )}
 
         {searchError && <div className="search-error">{searchError}</div>}
 
-        <AnswerPanel
-          answer={answer}
-          loading={answerLoading}
-          loadingMsg={loadingMsg}
-          error={answerError}
-        />
+        <AnswerPanel answer={answer} loading={answerLoading}
+          loadingMsg={loadingMsg} error={answerError} />
 
         {expositions !== null && !searchLoading && (
           <section className="results-section">
@@ -379,7 +425,7 @@ export default function App() {
             </h2>
             <div className="results-list">
               {expositions.map((exp, i) => (
-                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} />
+                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} semantic={isSemantic} />
               ))}
             </div>
           </section>
@@ -391,15 +437,13 @@ export default function App() {
               Query thousands of artistic research expositions from the{" "}
               <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">
                 Research Catalogue
-              </a>
-              .
+              </a>.
             </p>
             <p className="landing-sub">Try one of these:</p>
             <div className="example-list">
-              {EXAMPLE_QUERIES.map(q => (
-                <button key={q} className="example-btn" onClick={() => { setQuery(q); runSearch(q); }}>
-                  {q}
-                </button>
+              {EXAMPLES.map(q => (
+                <button key={q} className="example-btn"
+                  onClick={() => { setQuery(q); runSearch(q); }}>{q}</button>
               ))}
             </div>
           </div>
@@ -408,13 +452,9 @@ export default function App() {
 
       <footer className="app-footer">
         Data:{" "}
-        <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">
-          Research Catalogue
-        </a>
+        <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">Research Catalogue</a>
         {" · "}
-        <a href="https://rcdata.org" target="_blank" rel="noopener noreferrer">
-          RCData
-        </a>
+        <a href="https://rcdata.org" target="_blank" rel="noopener noreferrer">RCData</a>
         {" · "}
         Society for Artistic Research
       </footer>
