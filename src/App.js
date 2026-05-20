@@ -2,9 +2,12 @@ import React, { useState, useCallback } from "react";
 import "./style.css";
 
 const RC_SEARCH_URL = "https://www.researchcatalogue.net/portal/search-result";
+const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
 const CORS_PROXY = "https://corsproxy.io/?";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
+const DEEP_SEARCH_LIMIT = 5;   // expositions to fetch full content for
+const DEEP_TEXT_LIMIT = 2500;  // chars of body text per exposition sent to Claude
 
 function normalizeResults(data) {
   if (Array.isArray(data)) return data;
@@ -18,6 +21,17 @@ function isCorsError(e) {
     .some(msg => e.message.includes(msg));
 }
 
+async function proxiedFetch(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (!isCorsError(e)) throw e;
+    res = await fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+  }
+  return res;
+}
+
 async function fetchExpositions(query, page = 0) {
   const params = new URLSearchParams({
     fulltext: query,
@@ -26,19 +40,31 @@ async function fetchExpositions(query, page = 0) {
     format: "json",
     page: String(page),
   });
-  const targetUrl = `${RC_SEARCH_URL}?${params}`;
-
-  // Try direct first, fall back to CORS proxy
-  let res;
-  try {
-    res = await fetch(targetUrl);
-  } catch (e) {
-    if (!isCorsError(e)) throw e;
-    res = await fetch(`${CORS_PROXY}${encodeURIComponent(targetUrl)}`);
-  }
-
+  const res = await proxiedFetch(`${RC_SEARCH_URL}?${params}`);
   if (!res.ok) throw new Error(`Search returned ${res.status}`);
   return normalizeResults(await res.json());
+}
+
+async function fetchExpositionContent(id) {
+  const res = await proxiedFetch(`${RC_CONTENT_URL}/${id}`);
+  if (!res.ok) throw new Error(`Content fetch returned ${res.status}`);
+  return res.json();
+}
+
+function stripHtml(html) {
+  if (!html) return "";
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+}
+
+function extractText(data) {
+  if (!data || !Array.isArray(data.tools)) return "";
+  return data.tools
+    .filter(t => t.tool_type === "tool-text" || t.tool_type === "tool-simpletext")
+    .map(t => stripHtml(t.content || ""))
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function getAuthorName(exp) {
@@ -58,22 +84,38 @@ function getKeywords(exp) {
   return [];
 }
 
-function buildRAGContext(expositions) {
-  return expositions.slice(0, 10).map((exp, i) => {
+function getExpositionUrl(exp) {
+  if (exp.url) return exp.url;
+  if (exp["exposition-url"]) return exp["exposition-url"];
+  const id = exp.id || "";
+  const pageId = exp["default-page"]?.id || exp.defaultPage?.id || exp["default_page"]?.id || "";
+  if (id && pageId) return `https://www.researchcatalogue.net/view/${id}/${pageId}`;
+  if (id) return `https://www.researchcatalogue.net/view/${id}`;
+  return "https://www.researchcatalogue.net";
+}
+
+function buildContext(expositions, contentMap = {}) {
+  const deep = Object.keys(contentMap).length > 0;
+  const limit = deep ? DEEP_SEARCH_LIMIT : 10;
+  return expositions.slice(0, limit).map((exp, i) => {
     const author = getAuthorName(exp);
     const kws = getKeywords(exp).slice(0, 8).join(", ");
-    const abs = (exp.abstract || exp.description || "").slice(0, 400);
+    const abs = (exp.abstract || exp.description || "").slice(0, 300);
+    const bodyText = contentMap[exp.id] || "";
     return [
       `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
       exp.created ? `Published: ${exp.created}` : "",
       kws ? `Keywords: ${kws}` : "",
-      abs ? `Abstract: ${abs}${abs.length === 400 ? "…" : ""}` : "",
+      abs ? `Abstract: ${abs}` : "",
+      bodyText
+        ? `Full content:\n${bodyText.slice(0, DEEP_TEXT_LIMIT)}${bodyText.length > DEEP_TEXT_LIMIT ? "…" : ""}`
+        : "",
       `URL: ${getExpositionUrl(exp)}`,
     ].filter(Boolean).join("\n");
   }).join("\n\n---\n\n");
 }
 
-async function generateRAGAnswer(apiKey, query, context) {
+async function generateRAGAnswer(apiKey, query, context, deep) {
   const res = await fetch(CLAUDE_API_URL, {
     method: "POST",
     headers: {
@@ -84,10 +126,10 @@ async function generateRAGAnswer(apiKey, query, context) {
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: 1024,
+      max_tokens: deep ? 2048 : 1024,
       system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research. You help users discover and understand artistic research expositions.
 
-When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant. Focus on what the expositions reveal about the query topic.`,
+When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${deep ? " You have access to the full text content of each exposition — use it to give detailed, specific answers." : ""}`,
       messages: [{
         role: "user",
         content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
@@ -100,17 +142,6 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
   }
   const data = await res.json();
   return data.content?.[0]?.text || "";
-}
-
-function getExpositionUrl(exp) {
-  // Use any direct URL field the API provides
-  if (exp.url) return exp.url;
-  if (exp["exposition-url"]) return exp["exposition-url"];
-  const id = exp.id || "";
-  const pageId = exp["default-page"]?.id || exp.defaultPage?.id || exp["default_page"]?.id || "";
-  if (id && pageId) return `https://www.researchcatalogue.net/view/${id}/${pageId}`;
-  if (id) return `https://www.researchcatalogue.net/view/${id}`;
-  return "https://www.researchcatalogue.net";
 }
 
 function ExpositionCard({ exp, index }) {
@@ -153,12 +184,13 @@ function ExpositionCard({ exp, index }) {
   );
 }
 
-function AnswerPanel({ answer, loading, error }) {
-  if (!loading && !error && !answer) return null;
+function AnswerPanel({ answer, loading, loadingMsg, error }) {
+  if (!loading && !loadingMsg && !error && !answer) return null;
   return (
     <section className="answer-section">
       <h2 className="section-label">AI Answer</h2>
-      {loading && <p className="answer-loading">Generating answer…</p>}
+      {loadingMsg && <p className="answer-loading">{loadingMsg}</p>}
+      {loading && !loadingMsg && <p className="answer-loading">Generating answer…</p>}
       {error && <p className="answer-error">{error}</p>}
       {answer && <div className="answer-body">{answer}</div>}
     </section>
@@ -176,6 +208,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("rc_claude_key") || "");
   const [showSettings, setShowSettings] = useState(false);
+  const [deepSearch, setDeepSearch] = useState(() => localStorage.getItem("rc_deep_search") === "1");
 
   const [expositions, setExpositions] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -184,6 +217,7 @@ export default function App() {
   const [answer, setAnswer] = useState("");
   const [answerLoading, setAnswerLoading] = useState(false);
   const [answerError, setAnswerError] = useState("");
+  const [loadingMsg, setLoadingMsg] = useState("");
 
   const saveKey = (key) => {
     setApiKey(key);
@@ -191,12 +225,18 @@ export default function App() {
     else localStorage.removeItem("rc_claude_key");
   };
 
-  const runSearch = useCallback(async (q) => {
+  const toggleDeepSearch = (val) => {
+    setDeepSearch(val);
+    localStorage.setItem("rc_deep_search", val ? "1" : "");
+  };
+
+  const runSearch = useCallback(async (q, deep = deepSearch) => {
     if (!q.trim()) return;
     setSearchLoading(true);
     setSearchError("");
     setAnswer("");
     setAnswerError("");
+    setLoadingMsg("");
     setExpositions([]);
 
     let results = [];
@@ -211,19 +251,39 @@ export default function App() {
     }
     setSearchLoading(false);
 
-    if (apiKey && results.length > 0) {
-      setAnswerLoading(true);
-      try {
-        const context = buildRAGContext(results);
-        const ans = await generateRAGAnswer(apiKey, q, context);
-        setAnswer(ans);
-      } catch (e) {
-        setAnswerError(e.message);
-      } finally {
-        setAnswerLoading(false);
+    if (!apiKey || results.length === 0) return;
+
+    setAnswerLoading(true);
+    try {
+      let context;
+      if (deep && results.length > 0) {
+        const top = results.slice(0, DEEP_SEARCH_LIMIT);
+        const contentMap = {};
+        for (let i = 0; i < top.length; i++) {
+          setLoadingMsg(`Reading full content: exposition ${i + 1} of ${top.length}…`);
+          try {
+            const data = await fetchExpositionContent(top[i].id);
+            contentMap[top[i].id] = extractText(data);
+          } catch (e) {
+            console.warn(`Could not fetch content for ${top[i].id}:`, e.message);
+          }
+        }
+        setLoadingMsg("Generating answer…");
+        context = buildContext(results, contentMap);
+      } else {
+        setLoadingMsg("");
+        context = buildContext(results);
       }
+
+      const ans = await generateRAGAnswer(apiKey, q, context, deep);
+      setAnswer(ans);
+    } catch (e) {
+      setAnswerError(e.message);
+    } finally {
+      setAnswerLoading(false);
+      setLoadingMsg("");
     }
-  }, [apiKey]);
+  }, [apiKey, deepSearch]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -250,10 +310,10 @@ export default function App() {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Ask a question or search artistic research…"
-            disabled={searchLoading}
+            disabled={searchLoading || answerLoading}
             autoFocus
           />
-          <button className="search-btn" type="submit" disabled={searchLoading || !query.trim()}>
+          <button className="search-btn" type="submit" disabled={searchLoading || answerLoading || !query.trim()}>
             {searchLoading ? "…" : "Search"}
           </button>
           <button
@@ -265,6 +325,18 @@ export default function App() {
             ⚙
           </button>
         </form>
+
+        <div className="search-options">
+          <label className="deep-toggle">
+            <input
+              type="checkbox"
+              checked={deepSearch}
+              onChange={e => toggleDeepSearch(e.target.checked)}
+            />
+            <span className="deep-label">Deep search</span>
+            <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
+          </label>
+        </div>
 
         {showSettings && (
           <div className="settings-panel">
@@ -287,7 +359,12 @@ export default function App() {
 
         {searchError && <div className="search-error">{searchError}</div>}
 
-        <AnswerPanel answer={answer} loading={answerLoading} error={answerError} />
+        <AnswerPanel
+          answer={answer}
+          loading={answerLoading}
+          loadingMsg={loadingMsg}
+          error={answerError}
+        />
 
         {expositions !== null && !searchLoading && (
           <section className="results-section">

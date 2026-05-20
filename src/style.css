@@ -145,6 +145,41 @@ a:hover {
   background: #f0f0f0;
 }
 
+/* ── Search options ── */
+
+.search-options {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.deep-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.deep-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: #000;
+  flex-shrink: 0;
+}
+
+.deep-label {
+  font-weight: 700;
+}
+
+.deep-hint {
+  color: #777;
+  font-style: italic;
+}
+
 /* ── Settings ── */
 
 .settings-panel {
