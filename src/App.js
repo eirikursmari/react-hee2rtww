@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import "./style.css";
 
 const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
@@ -11,9 +11,9 @@ const MODELS = [
   { id: "claude-sonnet-4-6",         label: "Sonnet", note: "balanced"              },
   { id: "claude-opus-4-7",           label: "Opus",   note: "most capable"         },
 ];
-const DEEP_LIMIT     = 5;     // expositions to fetch full content for (deep mode)
-const DEEP_TEXT_MAX  = 2500;  // chars of body text per exposition for RAG overview
-const EXPO_TEXT_MAX  = 8000;  // chars per exposition for direct detailed queries
+const DEEP_LIMIT     = 5;
+const DEEP_TEXT_MAX  = 2500;
+const EXPO_TEXT_MAX  = 8000;
 
 // ── Network helpers ───────────────────────────────────────────────────────────
 
@@ -117,6 +117,12 @@ function getExpositionUrl(exp) {
   return "https://www.researchcatalogue.net";
 }
 
+function setsEqual(a, b) {
+  if (!b || a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
+}
+
 // ── Context building for Claude ───────────────────────────────────────────────
 
 function buildContext(expositions, contentMap = {}) {
@@ -185,15 +191,20 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
   return data.content?.[0]?.text ?? "";
 }
 
-async function callClaudeOnExpositions(apiKey, question, context, modelId, onRetry) {
+// Conversational query — history is [{q, a}, ...], systemCtx is the full exposition content
+async function callClaudeConversation(apiKey, systemCtx, history, question, modelId, onRetry) {
+  const messages = [
+    ...history.flatMap(({ q, a }) => [
+      { role: "user",      content: q },
+      { role: "assistant", content: a },
+    ]),
+    { role: "user", content: question },
+  ];
   const data = await claudePost({
     model: modelId,
     max_tokens: 2048,
-    system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you.`,
-    messages: [{
-      role: "user",
-      content: `Question about selected expositions: "${question}"\n\nExposition content:\n\n${context}`,
-    }],
+    system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you. This is a conversation, so build on your previous answers when relevant.\n\nExposition content:\n\n${systemCtx}`,
+    messages,
   }, apiKey, onRetry);
   return data.content?.[0]?.text ?? "";
 }
@@ -296,13 +307,23 @@ export default function App() {
   const [answerError,  setAnswerError]   = useState("");
   const [loadingMsg,   setLoadingMsg]    = useState("");
 
-  // Exposition query state
-  const [selectedIds, setSelectedIds] = useState(new Set());
-  const [expoQuery,   setExpoQuery]   = useState("");
-  const [expoAnswer,  setExpoAnswer]  = useState("");
-  const [expoLoading, setExpoLoading] = useState(false);
-  const [expoError,   setExpoError]   = useState("");
-  const [expoMsg,     setExpoMsg]     = useState("");
+  // Exposition conversation state
+  const [selectedIds,    setSelectedIds]    = useState(new Set());
+  const [expoQuery,      setExpoQuery]      = useState("");
+  const [expoConversation, setExpoConversation] = useState([]); // [{q, a}]
+  const [expoSystemCtx,  setExpoSystemCtx]  = useState("");    // fetched content, system prompt
+  const [expoCtxIds,     setExpoCtxIds]     = useState(null);  // Set snapshot for current ctx
+  const [expoLoading,    setExpoLoading]    = useState(false);
+  const [expoError,      setExpoError]      = useState("");
+  const [expoMsg,        setExpoMsg]        = useState("");
+
+  const conversationEndRef = useRef(null);
+
+  useEffect(() => {
+    if (expoConversation.length > 0) {
+      conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [expoConversation]);
 
   const save = (key, setter, storageKey) => (val) => {
     setter(val);
@@ -330,6 +351,14 @@ export default function App() {
 
   const deselectAll = useCallback(() => setSelectedIds(new Set()), []);
 
+  const clearConversation = useCallback(() => {
+    setExpoConversation([]);
+    setExpoSystemCtx("");
+    setExpoCtxIds(null);
+    setExpoError("");
+    setExpoMsg("");
+  }, []);
+
   const runSearch = useCallback(async (q) => {
     if (!q.trim()) return;
     setSearchLoading(true);
@@ -340,7 +369,9 @@ export default function App() {
     setExpositions([]);
     setIsSemantic(false);
     setSelectedIds(new Set());
-    setExpoAnswer("");
+    setExpoConversation([]);
+    setExpoSystemCtx("");
+    setExpoCtxIds(null);
     setExpoError("");
     setExpoMsg("");
 
@@ -417,52 +448,68 @@ export default function App() {
 
     setExpoLoading(true);
     setExpoError("");
-    setExpoAnswer("");
+    const currentQuestion = expoQuery;
 
-    const selected = (expositions || []).filter(exp => selectedIds.has(exp.id));
-    const contentMap = {};
+    let systemCtx = expoSystemCtx;
+    let currentHistory = expoConversation;
 
-    for (let i = 0; i < selected.length; i++) {
-      setExpoMsg(`Reading exposition ${i + 1} of ${selected.length}…`);
-      try {
-        const data = await fetchExpositionContent(selected[i].id);
-        contentMap[selected[i].id] = extractText(data);
-      } catch (err) {
-        console.warn(`Could not fetch content for ${selected[i].id}:`, err.message);
+    // Fetch content if this is the first question or the selection has changed
+    if (!systemCtx || !setsEqual(selectedIds, expoCtxIds)) {
+      currentHistory = [];
+      setExpoConversation([]);
+
+      const selected = (expositions || []).filter(exp => selectedIds.has(exp.id));
+      const contentMap = {};
+      for (let i = 0; i < selected.length; i++) {
+        setExpoMsg(`Reading exposition ${i + 1} of ${selected.length}…`);
+        try {
+          const data = await fetchExpositionContent(selected[i].id);
+          contentMap[selected[i].id] = extractText(data);
+        } catch (err) {
+          console.warn(`Could not fetch content for ${selected[i].id}:`, err.message);
+        }
       }
+
+      systemCtx = selected.map((exp, i) => {
+        const text = contentMap[exp.id] || exp.matchedText || "";
+        return [
+          `[${i + 1}] "${exp.title || "Untitled"}" — ${getAuthorName(exp)}`,
+          exp.created ? `Published: ${exp.created}` : "",
+          (exp.abstract || exp.description || "").slice(0, 500),
+          text
+            ? `Full content:\n${text.slice(0, EXPO_TEXT_MAX)}${text.length > EXPO_TEXT_MAX ? "…" : ""}`
+            : "",
+          `URL: ${getExpositionUrl(exp)}`,
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n");
+
+      setExpoSystemCtx(systemCtx);
+      setExpoCtxIds(new Set(selectedIds));
     }
 
-    const context = selected.map((exp, i) => {
-      const text = contentMap[exp.id] || exp.matchedText || "";
-      return [
-        `[${i + 1}] "${exp.title || "Untitled"}" — ${getAuthorName(exp)}`,
-        exp.created ? `Published: ${exp.created}` : "",
-        (exp.abstract || exp.description || "").slice(0, 500),
-        text
-          ? `Full content:\n${text.slice(0, EXPO_TEXT_MAX)}${text.length > EXPO_TEXT_MAX ? "…" : ""}`
-          : "",
-        `URL: ${getExpositionUrl(exp)}`,
-      ].filter(Boolean).join("\n");
-    }).join("\n\n---\n\n");
-
+    setExpoQuery("");
     setExpoMsg("Querying Claude…");
     try {
-      const ans = await callClaudeOnExpositions(apiKey, expoQuery, context, modelId,
+      const ans = await callClaudeConversation(
+        apiKey, systemCtx, currentHistory, currentQuestion, modelId,
         (attempt, total, waitMs) =>
-          setExpoMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`));
-      setExpoAnswer(ans);
+          setExpoMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`),
+      );
+      setExpoConversation(prev => [...prev, { q: currentQuestion, a: ans }]);
     } catch (err) {
       setExpoError(err.message);
+      setExpoQuery(currentQuestion); // restore on error
     } finally {
       setExpoLoading(false);
       setExpoMsg("");
     }
-  }, [apiKey, expoQuery, expositions, selectedIds, modelId]);
+  }, [apiKey, expoQuery, expoConversation, expoSystemCtx, expoCtxIds, expositions, selectedIds, modelId]);
 
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
   const usingSemanticIndex = !!semanticUrl;
   const numSelected = selectedIds.size;
+  const selectionChanged = expoConversation.length > 0 && !setsEqual(selectedIds, expoCtxIds);
 
   return (
     <div className="app">
@@ -574,17 +621,72 @@ export default function App() {
 
             {expositions.length > 0 && (
               <div className="expo-query-panel">
-                <h3 className="expo-query-title">
-                  Query expositions in detail
-                  {numSelected > 0 && (
-                    <span className="expo-query-count">{numSelected} selected</span>
+                <div className="expo-query-header">
+                  <h3 className="expo-query-title">
+                    Query expositions in detail
+                    {numSelected > 0 && (
+                      <span className="expo-query-count">{numSelected} selected</span>
+                    )}
+                  </h3>
+                  {expoConversation.length > 0 && (
+                    <button className="expo-clear-btn" onClick={clearConversation}
+                      title="Clear conversation and start fresh">
+                      Clear conversation
+                    </button>
                   )}
-                </h3>
-                <p className="expo-query-hint">
-                  {numSelected === 0
-                    ? "Select one or more expositions above (checkboxes), then ask a detailed question."
-                    : `Claude will read the full content of ${numSelected} exposition${numSelected !== 1 ? "s" : ""} and answer in detail.`}
-                </p>
+                </div>
+
+                {selectionChanged && (
+                  <p className="expo-selection-note">
+                    Selection changed — your next question will start a new conversation with the updated set of expositions.
+                  </p>
+                )}
+
+                {expoConversation.length === 0 && !expoLoading && (
+                  <p className="expo-query-hint">
+                    {numSelected === 0
+                      ? "Select one or more expositions above (checkboxes), then ask a detailed question."
+                      : `Claude will read the full content of ${numSelected} exposition${numSelected !== 1 ? "s" : ""} and answer in detail.`}
+                  </p>
+                )}
+
+                {/* Conversation thread */}
+                {expoConversation.length > 0 && (
+                  <div className="expo-conversation">
+                    {expoConversation.map(({ q, a }, i) => (
+                      <div key={i} className="expo-exchange">
+                        <div className="expo-exchange-q">
+                          <span className="exchange-label">Q</span>
+                          <span className="exchange-text">{q}</span>
+                        </div>
+                        <div className="expo-exchange-a">
+                          <span className="exchange-label exchange-label-a">A</span>
+                          <span className="exchange-text">{a}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {expoLoading && (
+                      <div className="expo-exchange">
+                        <div className="expo-exchange-q">
+                          <span className="exchange-label">Q</span>
+                          <span className="exchange-text">{expoQuery || "…"}</span>
+                        </div>
+                        <p className="answer-loading expo-loading-inline">{expoMsg || "Generating…"}</p>
+                      </div>
+                    )}
+                    {expoError && <p className="answer-error" style={{ marginTop: 8 }}>{expoError}</p>}
+                    <div ref={conversationEndRef} />
+                  </div>
+                )}
+
+                {/* Loading state before first answer */}
+                {expoLoading && expoConversation.length === 0 && (
+                  <p className="answer-loading" style={{ marginBottom: 10 }}>{expoMsg || "Generating…"}</p>
+                )}
+                {expoError && expoConversation.length === 0 && (
+                  <p className="answer-error" style={{ marginBottom: 10 }}>{expoError}</p>
+                )}
+
                 <div className="expo-model-row">
                   <div className="model-selector">
                     {MODELS.map(m => (
@@ -599,30 +701,26 @@ export default function App() {
                     ))}
                   </div>
                   <span className="expo-model-note">
-                    Haiku is fastest but can be temporarily overloaded by Anthropic — switch to Sonnet if you see an error.
+                    Haiku is fastest but can be temporarily overloaded — switch to Sonnet if you see an error.
                   </span>
                 </div>
+
                 <form className="expo-query-form" onSubmit={queryExpositions}>
                   <input
                     className="expo-query-input"
                     type="text"
                     value={expoQuery}
                     onChange={e => setExpoQuery(e.target.value)}
-                    placeholder="Ask a detailed question about the selected expositions…"
+                    placeholder={expoConversation.length > 0
+                      ? "Ask a follow-up question…"
+                      : "Ask a detailed question about the selected expositions…"}
                     disabled={expoLoading}
                   />
                   <button className="expo-query-btn" type="submit"
                     disabled={expoLoading || numSelected === 0 || !expoQuery.trim()}>
-                    {expoLoading ? "…" : "Query"}
+                    {expoLoading ? "…" : expoConversation.length > 0 ? "Send" : "Query"}
                   </button>
                 </form>
-                <AnswerPanel
-                  label="Detailed Answer"
-                  answer={expoAnswer}
-                  loading={expoLoading}
-                  loadingMsg={expoMsg}
-                  error={expoError}
-                />
               </div>
             )}
           </section>
