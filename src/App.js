@@ -12,7 +12,8 @@ const MODELS = [
   { id: "claude-opus-4-7",           label: "Opus",   note: "most capable"         },
 ];
 const DEEP_LIMIT     = 5;     // expositions to fetch full content for (deep mode)
-const DEEP_TEXT_MAX  = 2500;  // chars of body text per exposition sent to Claude
+const DEEP_TEXT_MAX  = 2500;  // chars of body text per exposition for RAG overview
+const EXPO_TEXT_MAX  = 8000;  // chars per exposition for direct detailed queries
 
 // ── Network helpers ───────────────────────────────────────────────────────────
 
@@ -124,7 +125,6 @@ function buildContext(expositions, contentMap = {}) {
     const author   = getAuthorName(exp);
     const kws      = getKeywords(exp).slice(0, 8).join(", ");
     const abs      = (exp.abstract || exp.description || "").slice(0, 300);
-    // semantic results carry a matchedText excerpt; deep search adds full content
     const bodyText = contentMap[exp.id] || exp.matchedText || "";
     return [
       `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
@@ -139,7 +139,7 @@ function buildContext(expositions, contentMap = {}) {
   }).join("\n\n---\n\n");
 }
 
-// ── Claude call ───────────────────────────────────────────────────────────────
+// ── Claude calls ──────────────────────────────────────────────────────────────
 
 async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId) {
   const res = await fetch(CLAUDE_API_URL, {
@@ -169,9 +169,35 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
   return (await res.json()).content?.[0]?.text ?? "";
 }
 
+async function callClaudeOnExpositions(apiKey, question, context, modelId) {
+  const res = await fetch(CLAUDE_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: 2048,
+      system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you.`,
+      messages: [{
+        role: "user",
+        content: `Question about selected expositions: "${question}"\n\nExposition content:\n\n${context}`,
+      }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Claude API error (${res.status})`);
+  }
+  return (await res.json()).content?.[0]?.text ?? "";
+}
+
 // ── Components ────────────────────────────────────────────────────────────────
 
-function ExpositionCard({ exp, index, semantic }) {
+function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
   const author   = getAuthorName(exp);
   const keywords = getKeywords(exp);
   const abstract = exp.abstract || exp.description || "";
@@ -179,7 +205,10 @@ function ExpositionCard({ exp, index, semantic }) {
   const thumb    = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
 
   return (
-    <article className="exp-card">
+    <article className={`exp-card${selected ? " exp-card-selected" : ""}`}>
+      <label className="exp-checkbox" title={selected ? "Deselect" : "Select for detailed query"}>
+        <input type="checkbox" checked={selected} onChange={() => onToggle(exp.id)} />
+      </label>
       <span className="exp-index">[{index + 1}]</span>
       {thumb && (
         <div className="exp-thumb-wrap">
@@ -224,11 +253,11 @@ function ExpositionCard({ exp, index, semantic }) {
   );
 }
 
-function AnswerPanel({ answer, loading, loadingMsg, error }) {
+function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }) {
   if (!loading && !loadingMsg && !error && !answer) return null;
   return (
     <section className="answer-section">
-      <h2 className="section-label">AI Answer</h2>
+      <h2 className="section-label">{label}</h2>
       {loadingMsg && <p className="answer-loading">{loadingMsg}</p>}
       {loading && !loadingMsg && <p className="answer-loading">Generating answer…</p>}
       {error && <p className="answer-error">{error}</p>}
@@ -264,6 +293,14 @@ export default function App() {
   const [answerError,  setAnswerError]   = useState("");
   const [loadingMsg,   setLoadingMsg]    = useState("");
 
+  // Exposition query state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [expoQuery,   setExpoQuery]   = useState("");
+  const [expoAnswer,  setExpoAnswer]  = useState("");
+  const [expoLoading, setExpoLoading] = useState(false);
+  const [expoError,   setExpoError]   = useState("");
+  const [expoMsg,     setExpoMsg]     = useState("");
+
   const save = (key, setter, storageKey) => (val) => {
     setter(val);
     if (val) localStorage.setItem(storageKey, val);
@@ -275,6 +312,21 @@ export default function App() {
     localStorage.setItem("rc_model", id);
   };
 
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    if (!expositions) return;
+    setSelectedIds(new Set(expositions.map(e => e.id)));
+  }, [expositions]);
+
+  const deselectAll = useCallback(() => setSelectedIds(new Set()), []);
+
   const runSearch = useCallback(async (q) => {
     if (!q.trim()) return;
     setSearchLoading(true);
@@ -284,6 +336,10 @@ export default function App() {
     setLoadingMsg("");
     setExpositions([]);
     setIsSemantic(false);
+    setSelectedIds(new Set());
+    setExpoAnswer("");
+    setExpoError("");
+    setExpoMsg("");
 
     let results = [];
     let semantic = false;
@@ -319,7 +375,6 @@ export default function App() {
       let context;
 
       if (!semantic && deepSearch) {
-        // Deep mode: fetch full JSON for top results from RC
         const top = results.slice(0, DEEP_LIMIT);
         const contentMap = {};
         for (let i = 0; i < top.length; i++) {
@@ -333,7 +388,6 @@ export default function App() {
         }
         context = buildContext(results, contentMap);
       } else {
-        // Semantic mode already has matchedText; keyword mode uses abstracts
         context = buildContext(results);
       }
 
@@ -348,9 +402,60 @@ export default function App() {
     }
   }, [apiKey, semanticUrl, deepSearch, modelId]);
 
+  const queryExpositions = useCallback(async (e) => {
+    e.preventDefault();
+    if (!expoQuery.trim() || selectedIds.size === 0) return;
+    if (!apiKey) {
+      setExpoError("No API key set — open ⚙ settings and enter your Anthropic API key.");
+      return;
+    }
+
+    setExpoLoading(true);
+    setExpoError("");
+    setExpoAnswer("");
+
+    const selected = (expositions || []).filter(exp => selectedIds.has(exp.id));
+    const contentMap = {};
+
+    for (let i = 0; i < selected.length; i++) {
+      setExpoMsg(`Reading exposition ${i + 1} of ${selected.length}…`);
+      try {
+        const data = await fetchExpositionContent(selected[i].id);
+        contentMap[selected[i].id] = extractText(data);
+      } catch (err) {
+        console.warn(`Could not fetch content for ${selected[i].id}:`, err.message);
+      }
+    }
+
+    const context = selected.map((exp, i) => {
+      const text = contentMap[exp.id] || exp.matchedText || "";
+      return [
+        `[${i + 1}] "${exp.title || "Untitled"}" — ${getAuthorName(exp)}`,
+        exp.created ? `Published: ${exp.created}` : "",
+        (exp.abstract || exp.description || "").slice(0, 500),
+        text
+          ? `Full content:\n${text.slice(0, EXPO_TEXT_MAX)}${text.length > EXPO_TEXT_MAX ? "…" : ""}`
+          : "",
+        `URL: ${getExpositionUrl(exp)}`,
+      ].filter(Boolean).join("\n");
+    }).join("\n\n---\n\n");
+
+    setExpoMsg("Querying Claude…");
+    try {
+      const ans = await callClaudeOnExpositions(apiKey, expoQuery, context, modelId);
+      setExpoAnswer(ans);
+    } catch (err) {
+      setExpoError(err.message);
+    } finally {
+      setExpoLoading(false);
+      setExpoMsg("");
+    }
+  }, [apiKey, expoQuery, expositions, selectedIds, modelId]);
+
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
   const usingSemanticIndex = !!semanticUrl;
+  const numSelected = selectedIds.size;
 
   return (
     <div className="app">
@@ -443,16 +548,73 @@ export default function App() {
 
         {expositions !== null && !searchLoading && (
           <section className="results-section">
-            <h2 className="section-label">
-              {expositions.length === 0
-                ? "No results found"
-                : `${expositions.length} exposition${expositions.length !== 1 ? "s" : ""} retrieved`}
-            </h2>
+            <div className="results-header">
+              <h2 className="section-label">
+                {expositions.length === 0
+                  ? "No results found"
+                  : `${expositions.length} exposition${expositions.length !== 1 ? "s" : ""} retrieved`}
+              </h2>
+              {expositions.length > 0 && (
+                <div className="select-controls">
+                  <button className="select-btn" onClick={selectAll}
+                    disabled={numSelected === expositions.length}>
+                    Select all
+                  </button>
+                  {numSelected > 0 && (
+                    <button className="select-btn" onClick={deselectAll}>
+                      Deselect all
+                    </button>
+                  )}
+                  {numSelected > 0 && (
+                    <span className="select-count">{numSelected} selected</span>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="results-list">
               {expositions.map((exp, i) => (
-                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} semantic={isSemantic} />
+                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} semantic={isSemantic}
+                  selected={selectedIds.has(exp.id)} onToggle={toggleSelect} />
               ))}
             </div>
+
+            {expositions.length > 0 && (
+              <div className="expo-query-panel">
+                <h3 className="expo-query-title">
+                  Query expositions in detail
+                  {numSelected > 0 && (
+                    <span className="expo-query-count">{numSelected} selected</span>
+                  )}
+                </h3>
+                <p className="expo-query-hint">
+                  {numSelected === 0
+                    ? "Select one or more expositions above (checkboxes), then ask a detailed question."
+                    : `Claude will read the full content of ${numSelected} exposition${numSelected !== 1 ? "s" : ""} and answer in detail.`}
+                </p>
+                <form className="expo-query-form" onSubmit={queryExpositions}>
+                  <input
+                    className="expo-query-input"
+                    type="text"
+                    value={expoQuery}
+                    onChange={e => setExpoQuery(e.target.value)}
+                    placeholder="Ask a detailed question about the selected expositions…"
+                    disabled={expoLoading}
+                  />
+                  <button className="expo-query-btn" type="submit"
+                    disabled={expoLoading || numSelected === 0 || !expoQuery.trim()}>
+                    {expoLoading ? "…" : "Query"}
+                  </button>
+                </form>
+                <AnswerPanel
+                  label="Detailed Answer"
+                  answer={expoAnswer}
+                  loading={expoLoading}
+                  loadingMsg={expoMsg}
+                  error={expoError}
+                />
+              </div>
+            )}
           </section>
         )}
 
