@@ -141,58 +141,61 @@ function buildContext(expositions, contentMap = {}) {
 
 // ── Claude calls ──────────────────────────────────────────────────────────────
 
-async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId) {
-  const res = await fetch(CLAUDE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: modelId,
-      max_tokens: 2048,
-      system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
-
-When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${isSemantic ? " Results were retrieved by semantic similarity — you may find content beyond the abstract that speaks directly to the query." : ""}`,
-      messages: [{
-        role: "user",
-        content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
-      }],
-    }),
-  });
-  if (!res.ok) {
+async function claudePost(body, apiKey, onRetry) {
+  const RETRIES = 3;
+  const DELAYS  = [3000, 6000, 12000];
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    const res = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
     const err = await res.json().catch(() => ({}));
+    const isOverloaded = res.status === 529 ||
+      (err.error?.type === "overloaded_error") ||
+      (err.error?.message || "").toLowerCase().includes("overload");
+    if (isOverloaded && attempt < RETRIES) {
+      const wait = DELAYS[attempt];
+      if (onRetry) onRetry(attempt + 1, RETRIES, wait);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
     throw new Error(err.error?.message || `Claude API error (${res.status})`);
   }
-  return (await res.json()).content?.[0]?.text ?? "";
 }
 
-async function callClaudeOnExpositions(apiKey, question, context, modelId) {
-  const res = await fetch(CLAUDE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: modelId,
-      max_tokens: 2048,
-      system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you.`,
-      messages: [{
-        role: "user",
-        content: `Question about selected expositions: "${question}"\n\nExposition content:\n\n${context}`,
-      }],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Claude API error (${res.status})`);
-  }
-  return (await res.json()).content?.[0]?.text ?? "";
+async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId, onRetry) {
+  const data = await claudePost({
+    model: modelId,
+    max_tokens: 2048,
+    system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
+
+When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${isSemantic ? " Results were retrieved by semantic similarity — you may find content beyond the abstract that speaks directly to the query." : ""}`,
+    messages: [{
+      role: "user",
+      content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
+    }],
+  }, apiKey, onRetry);
+  return data.content?.[0]?.text ?? "";
+}
+
+async function callClaudeOnExpositions(apiKey, question, context, modelId, onRetry) {
+  const data = await claudePost({
+    model: modelId,
+    max_tokens: 2048,
+    system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you.`,
+    messages: [{
+      role: "user",
+      content: `Question about selected expositions: "${question}"\n\nExposition content:\n\n${context}`,
+    }],
+  }, apiKey, onRetry);
+  return data.content?.[0]?.text ?? "";
 }
 
 // ── Components ────────────────────────────────────────────────────────────────
@@ -392,7 +395,9 @@ export default function App() {
       }
 
       setLoadingMsg("Generating answer…");
-      const ans = await generateRAGAnswer(apiKey, q, context, semantic, modelId);
+      const ans = await generateRAGAnswer(apiKey, q, context, semantic, modelId,
+        (attempt, total, waitMs) =>
+          setLoadingMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`));
       setAnswer(ans);
     } catch (e) {
       setAnswerError(e.message);
@@ -442,7 +447,9 @@ export default function App() {
 
     setExpoMsg("Querying Claude…");
     try {
-      const ans = await callClaudeOnExpositions(apiKey, expoQuery, context, modelId);
+      const ans = await callClaudeOnExpositions(apiKey, expoQuery, context, modelId,
+        (attempt, total, waitMs) =>
+          setExpoMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`));
       setExpoAnswer(ans);
     } catch (err) {
       setExpoError(err.message);
