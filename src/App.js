@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import "./style.css";
 
 const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
@@ -179,7 +180,7 @@ async function claudePost(body, apiKey, onRetry) {
 async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId, onRetry) {
   const data = await claudePost({
     model: modelId,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
 
 When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${isSemantic ? " Results were retrieved by semantic similarity — you may find content beyond the abstract that speaks directly to the query." : ""}`,
@@ -202,7 +203,7 @@ async function callClaudeConversation(apiKey, systemCtx, history, question, mode
   ];
   const data = await claudePost({
     model: modelId,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you. This is a conversation, so build on your previous answers when relevant.\n\nExposition content:\n\n${systemCtx}`,
     messages,
   }, apiKey, onRetry);
@@ -275,7 +276,7 @@ function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }
       {loadingMsg && <p className="answer-loading">{loadingMsg}</p>}
       {loading && !loadingMsg && <p className="answer-loading">Generating answer…</p>}
       {error && <p className="answer-error">{error}</p>}
-      {answer && <div className="answer-body">{answer}</div>}
+      {answer && <div className="answer-body"><ReactMarkdown>{answer}</ReactMarkdown></div>}
     </section>
   );
 }
@@ -661,7 +662,7 @@ export default function App() {
                         </div>
                         <div className="expo-exchange-a">
                           <span className="exchange-label exchange-label-a">A</span>
-                          <span className="exchange-text">{a}</span>
+                          <div className="exchange-text"><ReactMarkdown>{a}</ReactMarkdown></div>
                         </div>
                       </div>
                     ))}

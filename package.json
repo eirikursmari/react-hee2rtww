@@ -5,7 +5,8 @@
   "homepage": "https://eirikursmari.github.io/react-hee2rtww",
   "dependencies": {
     "react": "^18.1.0",
-    "react-dom": "^18.1.0"
+    "react-dom": "^18.1.0",
+    "react-markdown": "^10.1.0"
   },
   "scripts": {
     "start": "react-scripts start",

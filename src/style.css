@@ -337,7 +337,41 @@ a:hover {
 .answer-body {
   font-size: 14px;
   line-height: 1.75;
-  white-space: pre-wrap;
+}
+
+.answer-body p, .exchange-text p {
+  margin: 0 0 10px;
+}
+
+.answer-body p:last-child, .exchange-text p:last-child {
+  margin-bottom: 0;
+}
+
+.answer-body h1, .answer-body h2, .answer-body h3,
+.exchange-text h1, .exchange-text h2, .exchange-text h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 14px 0 4px;
+  font-family: Georgia, serif;
+}
+
+.answer-body ul, .answer-body ol,
+.exchange-text ul, .exchange-text ol {
+  margin: 4px 0 10px;
+  padding-left: 20px;
+}
+
+.answer-body li, .exchange-text li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+
+.answer-body strong, .exchange-text strong {
+  font-weight: 700;
+}
+
+.answer-body em, .exchange-text em {
+  font-style: italic;
 }
 
 /* ── Results ── */
