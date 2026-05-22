@@ -510,20 +510,6 @@ export default function App() {
               <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
             </label>
           )}
-          {(deepSearch || usingSemanticIndex) && (
-            <div className="model-selector">
-              {MODELS.map(m => (
-                <button
-                  key={m.id}
-                  className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
-                  onClick={() => saveModel(m.id)}
-                  title={m.note}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {showSettings && (
@@ -599,6 +585,23 @@ export default function App() {
                     ? "Select one or more expositions above (checkboxes), then ask a detailed question."
                     : `Claude will read the full content of ${numSelected} exposition${numSelected !== 1 ? "s" : ""} and answer in detail.`}
                 </p>
+                <div className="expo-model-row">
+                  <div className="model-selector">
+                    {MODELS.map(m => (
+                      <button
+                        key={m.id}
+                        className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
+                        onClick={() => saveModel(m.id)}
+                        title={m.note}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="expo-model-note">
+                    Haiku is fastest but can be temporarily overloaded by Anthropic — switch to Sonnet if you see an error.
+                  </span>
+                </div>
                 <form className="expo-query-form" onSubmit={queryExpositions}>
                   <input
                     className="expo-query-input"
