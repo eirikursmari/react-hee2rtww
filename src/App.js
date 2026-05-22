@@ -5,7 +5,12 @@ const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
 const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
 const CORS_PROXY     = "https://corsproxy.io/?";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL   = "claude-sonnet-4-6";
+
+const MODELS = [
+  { id: "claude-haiku-4-5-20251001", label: "Haiku",  note: "fastest · lowest cost" },
+  { id: "claude-sonnet-4-6",         label: "Sonnet", note: "balanced"              },
+  { id: "claude-opus-4-7",           label: "Opus",   note: "most capable"         },
+];
 const DEEP_LIMIT     = 5;     // expositions to fetch full content for (deep mode)
 const DEEP_TEXT_MAX  = 2500;  // chars of body text per exposition sent to Claude
 
@@ -136,7 +141,7 @@ function buildContext(expositions, contentMap = {}) {
 
 // ── Claude call ───────────────────────────────────────────────────────────────
 
-async function generateRAGAnswer(apiKey, query, context, isSemantic) {
+async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId) {
   const res = await fetch(CLAUDE_API_URL, {
     method: "POST",
     headers: {
@@ -146,7 +151,7 @@ async function generateRAGAnswer(apiKey, query, context, isSemantic) {
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model: modelId,
       max_tokens: 2048,
       system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
 
@@ -247,6 +252,7 @@ export default function App() {
   const [semanticUrl, setSemanticUrl] = useState(() => localStorage.getItem("rc_semantic_url")  || "");
   const [showSettings,setShowSettings]= useState(false);
   const [deepSearch,  setDeepSearch]  = useState(() => localStorage.getItem("rc_deep_search") === "1");
+  const [modelId,     setModelId]     = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
 
   const [expositions,   setExpositions]   = useState(null);
   const [isSemantic,    setIsSemantic]    = useState(false);
@@ -262,6 +268,11 @@ export default function App() {
     setter(val);
     if (val) localStorage.setItem(storageKey, val);
     else     localStorage.removeItem(storageKey);
+  };
+
+  const saveModel = (id) => {
+    setModelId(id);
+    localStorage.setItem("rc_model", id);
   };
 
   const runSearch = useCallback(async (q) => {
@@ -327,7 +338,7 @@ export default function App() {
       }
 
       setLoadingMsg("Generating answer…");
-      const ans = await generateRAGAnswer(apiKey, q, context, semantic);
+      const ans = await generateRAGAnswer(apiKey, q, context, semantic, modelId);
       setAnswer(ans);
     } catch (e) {
       setAnswerError(e.message);
@@ -335,7 +346,7 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, deepSearch]);
+  }, [apiKey, semanticUrl, deepSearch, modelId]);
 
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
@@ -386,6 +397,20 @@ export default function App() {
               <span className="deep-label">Deep search</span>
               <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
             </label>
+          )}
+          {(deepSearch || usingSemanticIndex) && (
+            <div className="model-selector">
+              {MODELS.map(m => (
+                <button
+                  key={m.id}
+                  className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
+                  onClick={() => saveModel(m.id)}
+                  title={m.note}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
