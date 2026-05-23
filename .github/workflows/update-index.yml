@@ -11,6 +11,10 @@ on:
         description: "Re-index all expositions (not just new ones)"
         required: false
         default: "false"
+      extract_only:
+        description: "Only run metadata extraction (skip re-embedding)"
+        required: false
+        default: "false"
       limit:
         description: "Process only the first N expositions (leave blank for all)"
         required: false
@@ -35,12 +39,16 @@ jobs:
         working-directory: pipeline
         env:
           OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.force }}" = "true" ]; then
             ARGS="$ARGS --force"
+          fi
+          if [ "${{ github.event.inputs.extract_only }}" = "true" ]; then
+            ARGS="$ARGS --extract-only"
           fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then
             ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"

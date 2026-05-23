@@ -4,25 +4,32 @@ RC Indexing Pipeline
 ====================
 Fetches all published expositions from the Research Catalogue,
 extracts plain text from every text tool on every page,
-generates vector embeddings, and stores them in Supabase/pgvector.
+generates vector embeddings, extracts structured metadata via Claude,
+and stores everything in Supabase/pgvector.
 
 Usage
 -----
-  # First run: index everything
+  # First run: index + extract everything
   python pipeline.py
 
   # Skip already-indexed expositions (safe to run repeatedly)
   python pipeline.py
 
-  # Force re-index everything (e.g. after a schema change)
+  # Force re-index + re-extract everything
   python pipeline.py --force
+
+  # Only run extraction on expositions not yet extracted (no re-embedding)
+  python pipeline.py --extract-only
 
   # Test with a small batch first
   python pipeline.py --limit 20
 
 Environment variables (see .env.example)
 -----------------------------------------
-  OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
+  OPENAI_API_KEY       — for embeddings
+  ANTHROPIC_API_KEY    — for metadata extraction (optional; skipped if absent)
+  SUPABASE_URL
+  SUPABASE_SERVICE_KEY
 """
 
 import os
@@ -55,24 +62,40 @@ log = logging.getLogger(__name__)
 
 RC_INTERNAL_URL  = "https://map.rcdata.org/internal_research.json"
 RC_EXPO_JSON_URL = "https://map.rcdata.org/rcjson/expo"
-REQUEST_DELAY    = 1.0    # seconds between exposition fetches (be polite)
-CHUNK_SIZE       = 6000   # characters per chunk (~1 500 tokens; limit is 8 191)
-CHUNK_OVERLAP    = 400    # character overlap between consecutive chunks
+REQUEST_DELAY    = 1.0    # seconds between RC API fetches
+CLAUDE_DELAY     = 0.5    # seconds between Claude API calls
+CHUNK_SIZE       = 6000
+CHUNK_OVERLAP    = 400
 EMBED_MODEL      = "text-embedding-3-small"
 EMBED_DIMS       = 1536
-EMBED_BATCH      = 100    # texts per OpenAI embeddings API call
+EMBED_BATCH      = 100
+EXTRACTION_MODEL = "claude-haiku-4-5-20251001"   # cheap + fast for batch extraction
+EXTRACT_TEXT_MAX = 6000  # chars of body text sent to Claude for extraction
 
 # ── Clients ───────────────────────────────────────────────────────────────────
 
-def get_clients() -> tuple[OpenAI, Client]:
+def get_clients():
     missing = [v for v in ("OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_KEY")
                if not os.environ.get(v)]
     if missing:
         log.error("Missing environment variables: %s", ", ".join(missing))
         sys.exit(1)
-    openai   = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    return openai, supabase
+
+    openai_client   = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    supabase_client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+
+    anthropic_client = None
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import anthropic
+            anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+            log.info("Anthropic client ready — metadata extraction enabled")
+        except ImportError:
+            log.warning("anthropic package not installed — metadata extraction disabled")
+    else:
+        log.warning("ANTHROPIC_API_KEY not set — metadata extraction will be skipped")
+
+    return openai_client, supabase_client, anthropic_client
 
 # ── HTML text extraction ──────────────────────────────────────────────────────
 
@@ -125,7 +148,6 @@ def extract_pages(data: dict) -> list[dict]:
 # ── Text chunking ─────────────────────────────────────────────────────────────
 
 def chunk_text(text: str) -> list[str]:
-    """Split text into overlapping fixed-size character chunks."""
     if len(text) <= CHUNK_SIZE:
         return [text]
     chunks, start = [], 0
@@ -203,10 +225,154 @@ def fetch_expo_json(expo_id: int) -> Optional[dict]:
         log.error("  Failed to fetch %d: %s", expo_id, e)
         return None
 
+# ── Metadata extraction via Claude ────────────────────────────────────────────
+
+EXTRACTION_SYSTEM = """\
+You are a research analyst specialising in artistic research. Extract structured
+metadata from exposition texts for the Research Catalogue (researchcatalogue.net).
+
+Return ONLY a valid JSON object — no prose, no markdown fences. Use null for
+fields where the information is not present. Be conservative: only include what
+is explicitly stated or clearly demonstrated in the text.
+
+For societal impact, carefully distinguish:
+- "potential" impact: what the artist intends or hopes to achieve beyond the
+  artistic/research context.
+- "actual" impact: outcomes that are documented as having already occurred —
+  partnerships formed, communities affected, events held, policy changes noted.
+"""
+
+EXTRACTION_SCHEMA = """\
+{
+  "research_approach": [],
+    // Array. Choose from: practice-based, theoretical, collaborative,
+    // participatory, autoethnographic, speculative, performative,
+    // experimental, historical, comparative. Add others if clearly applicable.
+
+  "artistic_medium": [],
+    // Array. E.g.: performance, sound, video, installation, painting,
+    // ceramics, drawing, photography, text, textile, sculpture, digital,
+    // architecture. Add others if clearly applicable.
+
+  "methodological_framing": [],
+    // Array. E.g.: phenomenological, material, archival, ethnographic,
+    // process-based, embodied, relational, site-specific.
+
+  "geographic_context": [],
+    // Array of countries, regions, or named cultural contexts explicitly
+    // referenced. Empty array if none mentioned.
+
+  "research_question": null,
+    // String. The central research question, stated or clearly implied.
+
+  "methods_described": null,
+    // String. Brief summary of the methods or working processes used.
+
+  "key_findings": null,
+    // String. Key findings, contributions, or outcomes of the research.
+
+  "materials_tools": null,
+    // String. Notable materials, tools, or technologies used.
+
+  "theoretical_refs": null,
+    // String. Key theorists, artists, or works explicitly referenced.
+
+  "impact_types": [],
+    // Array. Choose from: community engagement, cultural preservation,
+    // environmental, social justice, health and wellbeing, education,
+    // cross-cultural dialogue, public space, policy influence, economic.
+    // Empty array if no societal impact dimension is present.
+
+  "impact_scope": null,
+    // String. One of: local, regional, national, global.
+    // null if no societal impact is present.
+
+  "impact_evidence_level": null,
+    // String. One of:
+    //   stated_intent        — author expresses societal goals or intentions
+    //   demonstrated         — outcomes described within the exposition itself
+    //   externally_validated — third-party recognition, commissions, or
+    //                          institutional uptake mentioned
+    // Use the highest level that applies. null if no impact present.
+
+  "impact_potential": {
+    "beneficiaries": null,   // intended communities or groups
+    "goals": null,           // stated societal goals beyond the research context
+    "applications": null     // proposed future uses or applications
+  },
+
+  "impact_actual": {
+    "outcomes": null,          // documented outcomes or effects that have occurred
+    "communities": null,       // communities or institutions actually reached
+    "partnerships": null,      // collaborations or partnerships formed
+    "policy_changes": null,    // changes to practice, policy, or public space
+    "public_engagement": null  // public events, exhibitions, or activities documented
+  }
+}"""
+
+
+def build_extraction_prompt(title: str, author: str, abstract: str, body: str) -> str:
+    excerpt = body[:EXTRACT_TEXT_MAX] if body else ""
+    truncated = "…[truncated]" if len(body) > EXTRACT_TEXT_MAX else ""
+    return (
+        f"Title: {title}\n"
+        f"Author: {author}\n"
+        f"Abstract: {abstract[:800] if abstract else '(none)'}\n"
+        f"Content: {excerpt}{truncated}\n\n"
+        f"Extract metadata using this JSON structure:\n{EXTRACTION_SCHEMA}"
+    )
+
+
+def extract_metadata(anthropic_client, title: str, author: str,
+                     abstract: str, body: str) -> Optional[dict]:
+    """Call Claude Haiku to extract structured metadata. Returns dict or None."""
+    try:
+        resp = anthropic_client.messages.create(
+            model=EXTRACTION_MODEL,
+            max_tokens=1024,
+            system=EXTRACTION_SYSTEM,
+            messages=[{
+                "role": "user",
+                "content": build_extraction_prompt(title, author, abstract, body),
+            }],
+        )
+        raw = resp.content[0].text.strip()
+        # Strip accidental markdown fences
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        log.warning("  Extraction JSON parse error: %s", e)
+        return None
+    except Exception as e:
+        log.warning("  Extraction failed: %s", e)
+        return None
+
+
+def _clean_array(val) -> list:
+    """Return a list, empty list if None or wrong type."""
+    if isinstance(val, list):
+        return [str(v) for v in val if v]
+    return []
+
+
+def _clean_str(val) -> Optional[str]:
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
+def _clean_impact_block(val) -> Optional[dict]:
+    if not isinstance(val, dict):
+        return None
+    cleaned = {k: _clean_str(v) for k, v in val.items()}
+    return cleaned if any(cleaned.values()) else None
+
 # ── Supabase writes ───────────────────────────────────────────────────────────
 
-def upsert_exposition(sb: Client, expo: dict):
-    sb.table("expositions").upsert({
+def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None):
+    row = {
         "id":         expo["id"],
         "title":      expo.get("title", "Untitled"),
         "author":     author_name(expo.get("author")),
@@ -215,12 +381,32 @@ def upsert_exposition(sb: Client, expo: dict):
         "created_at": expo.get("created") or expo.get("date") or "",
         "url":        expo_url(expo),
         "indexed_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    }
+
+    if metadata:
+        row.update({
+            "research_approach":      _clean_array(metadata.get("research_approach")),
+            "artistic_medium":        _clean_array(metadata.get("artistic_medium")),
+            "methodological_framing": _clean_array(metadata.get("methodological_framing")),
+            "geographic_context":     _clean_array(metadata.get("geographic_context")),
+            "research_question":      _clean_str(metadata.get("research_question")),
+            "methods_described":      _clean_str(metadata.get("methods_described")),
+            "key_findings":           _clean_str(metadata.get("key_findings")),
+            "materials_tools":        _clean_str(metadata.get("materials_tools")),
+            "theoretical_refs":       _clean_str(metadata.get("theoretical_refs")),
+            "impact_types":           _clean_array(metadata.get("impact_types")),
+            "impact_scope":           _clean_str(metadata.get("impact_scope")),
+            "impact_evidence_level":  _clean_str(metadata.get("impact_evidence_level")),
+            "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
+            "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
+            "extracted_at":           datetime.now(timezone.utc).isoformat(),
+        })
+
+    sb.table("expositions").upsert(row).execute()
 
 
 def upsert_chunks(sb: Client, expo_id: int, page_id: int,
                   chunks: list[str], embeddings: list[list[float]]):
-    # Remove stale chunks for this page before inserting fresh ones
     sb.table("exposition_chunks") \
       .delete() \
       .eq("exposition_id", expo_id) \
@@ -240,17 +426,42 @@ def is_indexed(sb: Client, expo_id: int) -> bool:
     r = sb.table("expositions").select("id").eq("id", expo_id).execute()
     return len(r.data) > 0
 
+
+def needs_extraction(sb: Client, expo_id: int) -> bool:
+    """True if the exposition has no extracted_at timestamp."""
+    r = sb.table("expositions").select("extracted_at").eq("id", expo_id).execute()
+    if not r.data:
+        return True
+    return r.data[0].get("extracted_at") is None
+
 # ── Core indexing logic ───────────────────────────────────────────────────────
 
-def index_exposition(openai: OpenAI, sb: Client, expo: dict):
+def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=None):
     expo_id = expo["id"]
     title   = expo.get("title", "Untitled")[:70]
     log.info("  Fetching full JSON for '%s' (%d)", title, expo_id)
 
     content = fetch_expo_json(expo_id)
 
-    # Always store metadata even if we can't fetch full content
-    upsert_exposition(sb, expo)
+    # Extract metadata if Anthropic client is available
+    metadata = None
+    if anthropic_client and content:
+        pages    = extract_pages(content)
+        body     = "\n\n".join(p["text"] for p in pages)
+        abstract = expo.get("abstract") or expo.get("description") or ""
+        log.info("  Extracting metadata…")
+        metadata = extract_metadata(
+            anthropic_client, title,
+            author_name(expo.get("author")), abstract, body,
+        )
+        if metadata:
+            log.info("  Extraction OK — approach: %s  impact: %s",
+                     metadata.get("research_approach", []),
+                     metadata.get("impact_types", []))
+        time.sleep(CLAUDE_DELAY)
+
+    # Always store exposition metadata (with or without extraction)
+    upsert_exposition(sb, expo, metadata)
 
     if not content:
         return
@@ -271,10 +482,57 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict):
 
     log.info("  Stored %d chunk(s) across %d page(s)", total_chunks, len(pages))
 
-# ── Pipeline entry point ──────────────────────────────────────────────────────
 
-def run(force: bool = False, limit: Optional[int] = None):
-    openai, sb = get_clients()
+def extract_only_exposition(sb: Client, expo: dict, anthropic_client):
+    """Run extraction on an already-indexed exposition without re-embedding."""
+    expo_id = expo["id"]
+    title   = expo.get("title", "Untitled")[:70]
+    log.info("  Fetching JSON for extraction: '%s' (%d)", title, expo_id)
+
+    content = fetch_expo_json(expo_id)
+    if not content:
+        return
+
+    pages    = extract_pages(content)
+    body     = "\n\n".join(p["text"] for p in pages)
+    abstract = expo.get("abstract") or expo.get("description") or ""
+
+    metadata = extract_metadata(
+        anthropic_client, title,
+        author_name(expo.get("author")), abstract, body,
+    )
+    if not metadata:
+        return
+
+    log.info("  Extraction OK — approach: %s  impact: %s",
+             metadata.get("research_approach", []),
+             metadata.get("impact_types", []))
+
+    # Update only the extracted fields, leave embeddings untouched
+    update = {
+        "research_approach":      _clean_array(metadata.get("research_approach")),
+        "artistic_medium":        _clean_array(metadata.get("artistic_medium")),
+        "methodological_framing": _clean_array(metadata.get("methodological_framing")),
+        "geographic_context":     _clean_array(metadata.get("geographic_context")),
+        "research_question":      _clean_str(metadata.get("research_question")),
+        "methods_described":      _clean_str(metadata.get("methods_described")),
+        "key_findings":           _clean_str(metadata.get("key_findings")),
+        "materials_tools":        _clean_str(metadata.get("materials_tools")),
+        "theoretical_refs":       _clean_str(metadata.get("theoretical_refs")),
+        "impact_types":           _clean_array(metadata.get("impact_types")),
+        "impact_scope":           _clean_str(metadata.get("impact_scope")),
+        "impact_evidence_level":  _clean_str(metadata.get("impact_evidence_level")),
+        "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
+        "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
+        "extracted_at":           datetime.now(timezone.utc).isoformat(),
+    }
+    sb.table("expositions").update(update).eq("id", expo_id).execute()
+    time.sleep(CLAUDE_DELAY)
+
+# ── Pipeline entry points ─────────────────────────────────────────────────────
+
+def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None):
+    openai, sb, anthropic_client = get_clients()
 
     expositions = fetch_internal_research()
     log.info("Found %d expositions in master list", len(expositions))
@@ -292,29 +550,52 @@ def run(force: bool = False, limit: Optional[int] = None):
 
         prefix = f"[{i}/{len(expositions)}]"
 
-        if not force and is_indexed(sb, expo_id):
-            log.info("%s Already indexed %d — skipping", prefix, expo_id)
-            skipped += 1
-            continue
-
-        log.info("%s Indexing %d", prefix, expo_id)
-        try:
-            index_exposition(openai, sb, expo)
-            done += 1
-        except Exception as e:
-            log.error("%s Failed %d: %s", prefix, expo_id, e)
-            failed += 1
+        if extract_only:
+            # Only process expositions that are already indexed but not extracted
+            if not is_indexed(sb, expo_id):
+                log.info("%s Not indexed yet, skipping %d", prefix, expo_id)
+                skipped += 1
+                continue
+            if not needs_extraction(sb, expo_id) and not force:
+                log.info("%s Already extracted %d — skipping", prefix, expo_id)
+                skipped += 1
+                continue
+            if not anthropic_client:
+                log.error("--extract-only requires ANTHROPIC_API_KEY to be set")
+                sys.exit(1)
+            log.info("%s Extracting %d", prefix, expo_id)
+            try:
+                extract_only_exposition(sb, expo, anthropic_client)
+                done += 1
+            except Exception as e:
+                log.error("%s Failed %d: %s", prefix, expo_id, e)
+                failed += 1
+        else:
+            if not force and is_indexed(sb, expo_id):
+                log.info("%s Already indexed %d — skipping", prefix, expo_id)
+                skipped += 1
+                continue
+            log.info("%s Indexing %d", prefix, expo_id)
+            try:
+                index_exposition(openai, sb, expo, anthropic_client)
+                done += 1
+            except Exception as e:
+                log.error("%s Failed %d: %s", prefix, expo_id, e)
+                failed += 1
 
         time.sleep(REQUEST_DELAY)
 
-    log.info("Done — indexed: %d  skipped: %d  failed: %d", done, skipped, failed)
+    log.info("Done — processed: %d  skipped: %d  failed: %d", done, skipped, failed)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="RC Indexing Pipeline")
     ap.add_argument("--force", action="store_true",
-                    help="Re-index even if already indexed")
+                    help="Re-index / re-extract even if already processed")
+    ap.add_argument("--extract-only", action="store_true",
+                    help="Only run metadata extraction (skip embedding); "
+                         "targets expositions with no extracted_at timestamp")
     ap.add_argument("--limit", type=int, metavar="N",
                     help="Process only the first N expositions (for testing)")
     args = ap.parse_args()
-    run(force=args.force, limit=args.limit)
+    run(force=args.force, extract_only=args.extract_only, limit=args.limit)
