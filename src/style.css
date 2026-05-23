@@ -269,6 +269,11 @@ a:hover {
   opacity: 0.55;
 }
 
+.settings-input-wrap {
+  display: flex;
+  gap: 0;
+}
+
 .settings-input {
   width: 100%;
   padding: 8px 12px;
@@ -279,8 +284,30 @@ a:hover {
   outline: none;
 }
 
+.settings-input-key {
+  flex: 1;
+  width: auto;
+  border-right: none;
+}
+
 .settings-input:focus {
   border-color: #000;
+}
+
+.settings-reveal {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-family: Georgia, serif;
+  font-size: 12px;
+  background: #f5f5f5;
+  border: 1px solid #bbb;
+  cursor: pointer;
+  color: #444;
+}
+
+.settings-reveal:hover {
+  background: #e8e8e8;
+  color: #000;
 }
 
 .settings-note {

@@ -297,6 +297,7 @@ export default function App() {
   const [showSettings,setShowSettings]= useState(false);
   const [deepSearch,  setDeepSearch]  = useState(() => localStorage.getItem("rc_deep_search") === "1");
   const [modelId,     setModelId]     = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
+  const [showApiKey,  setShowApiKey]  = useState(false);
 
   const [expositions,   setExpositions]   = useState(null);
   const [isSemantic,    setIsSemantic]    = useState(false);
@@ -565,9 +566,15 @@ export default function App() {
             <label className="settings-label">
               Anthropic API Key <span className="settings-hint">(enables AI-generated answers)</span>
             </label>
-            <input className="settings-input" type="password" value={apiKey}
-              onChange={e => save("key", setApiKey, "rc_claude_key")(e.target.value)}
-              placeholder="sk-ant-api03-…" spellCheck={false} />
+            <div className="settings-input-wrap">
+              <input className="settings-input settings-input-key" type={showApiKey ? "text" : "password"} value={apiKey}
+                onChange={e => save("key", setApiKey, "rc_claude_key")(e.target.value)}
+                placeholder="sk-ant-api03-…" spellCheck={false} autoComplete="off" />
+              <button className="settings-reveal" onClick={() => setShowApiKey(s => !s)}
+                title={showApiKey ? "Hide key" : "Show key"}>
+                {showApiKey ? "Hide" : "Show"}
+              </button>
+            </div>
 
             <label className="settings-label" style={{ marginTop: 16 }}>
               Semantic Search API URL <span className="settings-hint">(optional — Vercel endpoint)</span>
