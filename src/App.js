@@ -86,8 +86,9 @@ function extractText(data) {
   const items = typeof pages === "object" && !Array.isArray(pages)
     ? Object.values(pages) : (Array.isArray(pages) ? pages : []);
   for (const page of items) {
+    const tools = (page.tools && typeof page.tools === "object") ? page.tools : page;
     for (const type of ["tool-text", "tool-simpletext"]) {
-      for (const tool of page[type] ?? []) {
+      for (const tool of tools[type] ?? []) {
         const t = stripHtml(tool.content ?? "");
         if (t) texts.push(t);
       }
