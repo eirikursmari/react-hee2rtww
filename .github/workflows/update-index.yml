@@ -1,0 +1,56 @@
+name: Update RC Index
+
+on:
+  schedule:
+    # Every Monday at 02:00 UTC — picks up new expositions from the past week
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    # Allow manual runs from the GitHub Actions tab
+    inputs:
+      force:
+        description: "Re-index all expositions (not just new ones)"
+        required: false
+        default: "false"
+      extract_only:
+        description: "Only run metadata extraction (skip re-embedding)"
+        required: false
+        default: "false"
+      limit:
+        description: "Process only the first N expositions (leave blank for all)"
+        required: false
+        default: ""
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # 3-hour ceiling; full initial run takes ~1.5 h at 1 req/s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Run pipeline
+        working-directory: pipeline
+        env:
+          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          if [ "${{ github.event.inputs.extract_only }}" = "true" ]; then
+            ARGS="$ARGS --extract-only"
+          fi
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"
+          fi
+          python pipeline.py $ARGS

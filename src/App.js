@@ -1,259 +1,766 @@
-import React from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import "./style.css";
 
-export default function App() {
-  return (
-    <div>
-      <h1>Hello StackBlitz!</h1>
-      <p>Start editing to see some magic happen :)</p>
-    </div>
-  );
+const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
+const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
+const CORS_PROXY     = "https://corsproxy.io/?";
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+
+const MODELS = [
+  { id: "claude-haiku-4-5-20251001", label: "Haiku",  note: "fastest · lowest cost" },
+  { id: "claude-sonnet-4-6",         label: "Sonnet", note: "balanced"              },
+  { id: "claude-opus-4-7",           label: "Opus",   note: "most capable"         },
+];
+const DEEP_LIMIT     = 5;
+const DEEP_TEXT_MAX  = 2500;
+const EXPO_TEXT_MAX  = 8000;
+
+// ── Network helpers ───────────────────────────────────────────────────────────
+
+function isCorsError(e) {
+  return ["Failed to fetch", "NetworkError", "Load failed", "Network request failed"]
+    .some(msg => e.message.includes(msg));
 }
-import { useState } from "react";
 
-const mannNodes = [
-  { id: "person", label: "Manneskja", sub: "Miðpunkturinn", x: 50, y: 50, size: 52, main: true },
-  { id: "census", label: "Manntöl", sub: "1703–1920", x: 50, y: 14, size: 38 },
-  { id: "smb", label: "SMB", sub: "Sögulegt mann- og bæjatal", x: 79, y: 28, size: 36 },
-  { id: "farm", label: "Bæir & Jarðir", sub: "Jarðabók 1702–14", x: 82, y: 57, size: 34 },
-  { id: "church", label: "Kirkjubækur", sub: "Skírn · Giftingar · Dauðar", x: 65, y: 80, size: 32 },
-  { id: "isl", label: "Íslendingabók", sub: "Ættfræðitenging", x: 35, y: 82, size: 34 },
-  { id: "geo", label: "Örnefni & Kort", sub: "GeoNames · staðsetning", x: 18, y: 60, size: 30 },
-  { id: "wikidata", label: "Wikidata", sub: "Alþjóðleg tenging", x: 16, y: 32, size: 28 },
-  { id: "kvenna", label: "Kvennaspor", sub: "Rannsóknarverkefni", x: 50, y: 33, size: 26, secondary: true },
-];
+async function proxiedFetch(url) {
+  try {
+    return await fetch(url);
+  } catch (e) {
+    if (!isCorsError(e)) throw e;
+    return fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+  }
+}
 
-const mannEdges = [
-  ["person", "census", "skráð í"],
-  ["person", "smb", "tengd með SMB"],
-  ["person", "church", "lífsatvik"],
-  ["person", "isl", "ættartenging"],
-  ["person", "farm", "bjó á"],
-  ["census", "smb", "grunnur"],
-  ["smb", "geo", "staðsetning"],
-  ["farm", "geo", "kortlagður"],
-  ["isl", "wikidata", "tengdur"],
-  ["person", "wikidata", "ef þekkt"],
-  ["smb", "kvenna", "innviður"],
-  ["census", "kvenna", "gögn"],
-];
+// ── Search functions ──────────────────────────────────────────────────────────
 
-const listaNodes = [
-  { id: "artwork", label: "Listaverk", sub: "Miðpunkturinn", x: 50, y: 50, size: 52, main: true },
-  { id: "artist", label: "Listamaður", sub: "Ævisaga · menntun", x: 50, y: 13, size: 40 },
-  { id: "museum", label: "Safneignin", sub: "LSÍ · LSR · LSA", x: 80, y: 27, size: 36 },
-  { id: "exhibition", label: "Sýningar", sub: "Sýningaskrár · dagsetningar", x: 84, y: 55, size: 34 },
-  { id: "photo", label: "Ljósmyndir", sub: "Sarpur · skjalasjóður", x: 65, y: 80, size: 30 },
-  { id: "press", label: "Fréttir & Gagnrýni", sub: "Tímarit.is · dagblöð", x: 36, y: 83, size: 32 },
-  { id: "poster", label: "Veggspjöld", sub: "Auglýsingarefni", x: 17, y: 62, size: 28 },
-  { id: "letters", label: "Bréf & Skjöl", sub: "Einkasamlagnir", x: 15, y: 35, size: 26 },
-  { id: "smb2", label: "ManntölSampo", sub: "Ævisögutengsl", x: 50, y: 32, size: 26, secondary: true },
-];
+async function fetchKeywordResults(query) {
+  const params = new URLSearchParams({
+    fulltext: query, statuses: "published",
+    type: "exposition", format: "json", page: "0",
+  });
+  const res = await proxiedFetch(`${RC_SEARCH_URL}?${params}`);
+  if (!res.ok) throw new Error(`RC search returned ${res.status}`);
+  const data = await res.json();
+  if (Array.isArray(data)) return data;
+  return data.expositions ?? data.results ?? [];
+}
 
-const listaEdges = [
-  ["artwork", "artist", "búið til af"],
-  ["artwork", "museum", "varðveitt í"],
-  ["artwork", "exhibition", "sýnt á"],
-  ["artwork", "photo", "myndsett"],
-  ["artwork", "press", "gagnrýnt"],
-  ["artist", "letters", "skrifaði"],
-  ["artist", "smb2", "ævisögutengsl"],
-  ["exhibition", "poster", "kynnt með"],
-  ["exhibition", "press", "fjallað um"],
-  ["exhibition", "photo", "skráð með"],
-  ["museum", "exhibition", "hýsti"],
-  ["letters", "artwork", "lýsir"],
-];
+async function fetchSemanticResults(apiUrl, query, limit = 10) {
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Semantic search returned ${res.status}`);
+  }
+  const data = await res.json();
+  return data.results ?? [];
+}
 
-const theme = {
-  bg: "#ffffff",
-  font: "Georgia, serif",
-  titleColor: "#000000",
-  mainFill: "#000000",
-  mainStroke: "#000000",
-  mainText: "#ffffff",
-  nodeFill: "#ffffff",
-  nodeStroke: "#000000",
-  nodeText: "#000000",
-  secFill: "#f0f0f0",
-  secStroke: "#000000",
-  subText: "#444444",
-  edge: "#000000",
-  edgeActive: "#000000",
-  panelBg: "rgba(255,255,255,0.95)",
-  panelBorder: "#000000",
-};
+async function fetchExpositionContent(id) {
+  const res = await proxiedFetch(`${RC_CONTENT_URL}/${id}`);
+  if (!res.ok) throw new Error(`Content fetch returned ${res.status}`);
+  return res.json();
+}
 
-function SampoGraph({ nodes, edges, title, description }) {
-  const [hovered, setHovered] = useState(null);
-  const [selected, setSelected] = useState(null);
+// ── Text helpers ──────────────────────────────────────────────────────────────
 
-  const connected = hovered
-    ? new Set(edges.flatMap(e => e[0] === hovered || e[1] === hovered ? [e[0], e[1]] : []))
-    : new Set();
+function stripHtml(html) {
+  if (!html) return "";
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+}
 
-  const activeNode = selected
-    ? nodes.find(n => n.id === selected)
-    : nodes.find(n => n.main);
+function extractText(data) {
+  const pages = data?.pages ?? {};
+  const texts = [];
+  const items = typeof pages === "object" && !Array.isArray(pages)
+    ? Object.values(pages) : (Array.isArray(pages) ? pages : []);
+  for (const page of items) {
+    for (const type of ["tool-text", "tool-simpletext"]) {
+      for (const tool of page[type] ?? []) {
+        const t = stripHtml(tool.content ?? "");
+        if (t) texts.push(t);
+      }
+    }
+  }
+  return texts.join("\n\n");
+}
 
-  const activeEdges = activeNode
-    ? edges.filter(e => e[0] === activeNode.id || e[1] === activeNode.id)
-    : [];
+function getAuthorName(exp) {
+  const a = exp.author;
+  if (!a) return "Unknown";
+  if (typeof a === "string") return a;
+  if (a.name) return a.name;
+  if (a.firstName) return `${a.firstName} ${a.lastName || ""}`.trim();
+  return "Unknown";
+}
+
+function getKeywords(exp) {
+  const kw = exp.keywords;
+  if (!kw) return [];
+  if (Array.isArray(kw)) return kw;
+  if (typeof kw === "string") return kw.split(/[,;]+/).map(k => k.trim()).filter(Boolean);
+  return [];
+}
+
+function getExpositionUrl(exp) {
+  if (exp.url) return exp.url;
+  if (exp["exposition-url"]) return exp["exposition-url"];
+  const id = exp.id ?? "";
+  const pid = exp["default-page"]?.id ?? exp.defaultPage?.id ?? exp["default_page"]?.id ?? "";
+  if (id && pid) return `https://www.researchcatalogue.net/view/${id}/${pid}`;
+  if (id) return `https://www.researchcatalogue.net/view/${id}`;
+  return "https://www.researchcatalogue.net";
+}
+
+function setsEqual(a, b) {
+  if (!b || a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
+}
+
+// ── Context building for Claude ───────────────────────────────────────────────
+
+function buildContext(expositions, contentMap = {}) {
+  const limit = Object.keys(contentMap).length > 0 ? DEEP_LIMIT : 10;
+  return expositions.slice(0, limit).map((exp, i) => {
+    const author   = getAuthorName(exp);
+    const kws      = getKeywords(exp).slice(0, 8).join(", ");
+    const abs      = (exp.abstract || exp.description || "").slice(0, 300);
+    const bodyText = contentMap[exp.id] || exp.matchedText || "";
+    return [
+      `[${i + 1}] "${exp.title || "Untitled"}" — ${author}`,
+      exp.created ? `Published: ${exp.created}` : "",
+      kws  ? `Keywords: ${kws}` : "",
+      abs  ? `Abstract: ${abs}` : "",
+      bodyText
+        ? `Relevant content:\n${bodyText.slice(0, DEEP_TEXT_MAX)}${bodyText.length > DEEP_TEXT_MAX ? "…" : ""}`
+        : "",
+      `URL: ${getExpositionUrl(exp)}`,
+    ].filter(Boolean).join("\n");
+  }).join("\n\n---\n\n");
+}
+
+// ── Claude calls ──────────────────────────────────────────────────────────────
+
+async function claudePost(body, apiKey, onRetry) {
+  const RETRIES = 3;
+  const DELAYS  = [3000, 6000, 12000];
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    const res = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    const err = await res.json().catch(() => ({}));
+    const isOverloaded = res.status === 529 ||
+      (err.error?.type === "overloaded_error") ||
+      (err.error?.message || "").toLowerCase().includes("overload");
+    if (isOverloaded && attempt < RETRIES) {
+      const wait = DELAYS[attempt];
+      if (onRetry) onRetry(attempt + 1, RETRIES, wait);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+    throw new Error(err.error?.message || `Claude API error (${res.status})`);
+  }
+}
+
+async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId, onRetry) {
+  const data = await claudePost({
+    model: modelId,
+    max_tokens: 4096,
+    system: `You are a knowledgeable research assistant for the Research Catalogue (researchcatalogue.net), an international database for artistic research maintained by the Society for Artistic Research.
+
+When answering, cite retrieved expositions by their bracket number [N]. Be concise and insightful; highlight connections between works when relevant.${isSemantic ? " Results were retrieved by semantic similarity — you may find content beyond the abstract that speaks directly to the query." : ""}`,
+    messages: [{
+      role: "user",
+      content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
+    }],
+  }, apiKey, onRetry);
+  return data.content?.[0]?.text ?? "";
+}
+
+// Conversational query — history is [{q, a}, ...], systemCtx is the full exposition content
+async function callClaudeConversation(apiKey, systemCtx, history, question, modelId, onRetry) {
+  const messages = [
+    ...history.flatMap(({ q, a }) => [
+      { role: "user",      content: q },
+      { role: "assistant", content: a },
+    ]),
+    { role: "user", content: question },
+  ];
+  const data = await claudePost({
+    model: modelId,
+    max_tokens: 4096,
+    system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you. This is a conversation, so build on your previous answers when relevant.\n\nExposition content:\n\n${systemCtx}`,
+    messages,
+  }, apiKey, onRetry);
+  return data.content?.[0]?.text ?? "";
+}
+
+// ── Components ────────────────────────────────────────────────────────────────
+
+function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
+  const author   = getAuthorName(exp);
+  const keywords = getKeywords(exp);
+  const abstract = exp.abstract || exp.description || "";
+  const url      = getExpositionUrl(exp);
+  const thumb    = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      {/* Title */}
-      <div style={{ position: "absolute", top: 18, left: 22, zIndex: 10, fontFamily: theme.font }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: theme.titleColor, letterSpacing: "-0.02em", lineHeight: 1 }}>
-          {title}
-        </div>
-        <div style={{ fontSize: 11, color: theme.titleColor, opacity: 0.5, marginTop: 5, maxWidth: 240 }}>
-          {description}
-        </div>
-      </div>
-
-      {/* Info panel */}
-      {activeNode && (
-        <div style={{
-          position: "absolute", bottom: 18, right: 18, zIndex: 10,
-          background: theme.panelBg,
-          border: `1px solid ${theme.panelBorder}`,
-          borderRadius: 6, padding: "10px 14px", maxWidth: 210,
-          fontFamily: theme.font,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: theme.titleColor }}>{activeNode.label}</div>
-          <div style={{ fontSize: 10, color: theme.titleColor, opacity: 0.55, marginTop: 3 }}>{activeNode.sub}</div>
-          <div style={{ fontSize: 9, color: theme.titleColor, opacity: 0.45, marginTop: 8, lineHeight: 1.7 }}>
-            {activeEdges.map((e, i) => {
-              const otherId = e[0] === activeNode.id ? e[1] : e[0];
-              const other = nodes.find(n => n.id === otherId);
-              const rel = e[0] === activeNode.id ? `→ ${e[2]}` : `← ${e[2]}`;
-              return <div key={i}>{rel}: <strong>{other?.label}</strong></div>;
-            })}
-          </div>
+    <article className={`exp-card${selected ? " exp-card-selected" : ""}`}>
+      <label className="exp-checkbox" title={selected ? "Deselect" : "Select for detailed query"}>
+        <input type="checkbox" checked={selected} onChange={() => onToggle(exp.id)} />
+      </label>
+      <span className="exp-index">[{index + 1}]</span>
+      {thumb && (
+        <div className="exp-thumb-wrap">
+          <img className="exp-thumb" src={thumb} alt="" loading="lazy" />
         </div>
       )}
-
-      <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-        {/* Edges */}
-        {edges.map((edge, i) => {
-          const from = nodes.find(n => n.id === edge[0]);
-          const to = nodes.find(n => n.id === edge[1]);
-          if (!from || !to) return null;
-          const isActive = hovered ? (edge[0] === hovered || edge[1] === hovered) : false;
-          const dim = hovered && !isActive;
-          return (
-            <line key={i}
-              x1={`${from.x}%`} y1={`${from.y}%`}
-              x2={`${to.x}%`} y2={`${to.y}%`}
-              stroke={theme.edge}
-              strokeWidth={isActive ? 2 : 1}
-              strokeDasharray={isActive ? "none" : "5 4"}
-              style={{ opacity: dim ? 0.08 : isActive ? 1 : 0.3, transition: "opacity 0.25s" }}
-            />
-          );
-        })}
-
-        {/* Nodes */}
-        {nodes.map(node => {
-          const isHov = hovered === node.id;
-          const isCon = connected.has(node.id);
-          const dim = hovered && !isHov && !isCon;
-          const fill = node.main ? theme.mainFill : node.secondary ? theme.secFill : theme.nodeFill;
-          const stroke = theme.nodeStroke;
-          const textCol = node.main ? theme.mainText : theme.nodeText;
-          return (
-            <g key={node.id}
-              style={{ cursor: "pointer", opacity: dim ? 0.15 : 1, transition: "opacity 0.25s" }}
-              onClick={() => setSelected(selected === node.id ? null : node.id)}
-              onMouseEnter={() => setHovered(node.id)}
-              onMouseLeave={() => setHovered(null)}
-            >
-              <circle
-                cx={`${node.x}%`} cy={`${node.y}%`}
-                r={node.size / 2 + (isHov ? 3 : 0)}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={node.main ? 2.5 : isHov ? 2.5 : 1.5}
-                style={{ transition: "r 0.2s" }}
-              />
-              <text
-                x={`${node.x}%`} y={`${node.y}%`}
-                textAnchor="middle" dy="-3"
-                fontSize={node.main ? 11 : 9}
-                fontWeight="700"
-                fill={textCol}
-                fontFamily={theme.font}
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >{node.label}</text>
-              <text
-                x={`${node.x}%`} y={`${node.y}%`}
-                textAnchor="middle" dy="9"
-                fontSize={6.5}
-                fill={node.main ? "#ffffff" : theme.subText}
-                fontFamily={theme.font}
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >{node.sub}</text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Hint */}
-      <div style={{
-        position: "absolute", bottom: 18, left: 22,
-        fontSize: 10, fontFamily: theme.font,
-        color: theme.titleColor, opacity: 0.3,
-      }}>
-        Haltu yfir hnút · Smelltu til að læsa
+      <div className="exp-body">
+        <a className="exp-title" href={url} target="_blank" rel="noopener noreferrer">
+          {exp.title || "Untitled"}
+        </a>
+        <div className="exp-meta">
+          {author}
+          {exp.created && <> · <time>{exp.created}</time></>}
+          {semantic && exp.similarity != null && (
+            <span className="similarity-badge">
+              {Math.round(exp.similarity * 100)}% match
+            </span>
+          )}
+        </div>
+        {abstract && (
+          <p className="exp-abstract">
+            {abstract.length > 240 ? abstract.slice(0, 240) + "…" : abstract}
+          </p>
+        )}
+        {semantic && exp.matchedText && (
+          <p className="exp-matched">
+            <span className="matched-label">Matched: </span>
+            {exp.matchedText.length > 200
+              ? exp.matchedText.slice(0, 200) + "…"
+              : exp.matchedText}
+          </p>
+        )}
+        {keywords.length > 0 && (
+          <div className="exp-keywords">
+            {keywords.slice(0, 7).map((kw, i) => (
+              <span className="kw-tag" key={i}>{kw}</span>
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </article>
   );
 }
 
+function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }) {
+  if (!loading && !loadingMsg && !error && !answer) return null;
+  return (
+    <section className="answer-section">
+      <h2 className="section-label">{label}</h2>
+      {loadingMsg && <p className="answer-loading">{loadingMsg}</p>}
+      {loading && !loadingMsg && <p className="answer-loading">Generating answer…</p>}
+      {error && <p className="answer-error">{error}</p>}
+      {answer && <div className="answer-body"><ReactMarkdown>{answer}</ReactMarkdown></div>}
+    </section>
+  );
+}
+
+const EXAMPLES = [
+  "artistic practice as research",
+  "sound art and performance",
+  "material culture and craft",
+  "digital and interactive art",
+];
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
 export default function App() {
-  const [active, setActive] = useState(0);
+  const [query,       setQuery]       = useState("");
+  const [apiKey,      setApiKey]      = useState(() => localStorage.getItem("rc_claude_key")    || "");
+  const [semanticUrl, setSemanticUrl] = useState(() => localStorage.getItem("rc_semantic_url")  || "");
+  const [showSettings,setShowSettings]= useState(false);
+  const [deepSearch,  setDeepSearch]  = useState(() => localStorage.getItem("rc_deep_search") === "1");
+  const [modelId,     setModelId]     = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
+  const [showApiKey,  setShowApiKey]  = useState(false);
 
-  const graphs = [
-    {
-      nodes: mannNodes, edges: mannEdges,
-      title: "Manntöl",
-      description: "Tenging manntalsgagna 1703–1920 við sögulegar heimildir"
-    },
-    {
-      nodes: listaNodes, edges: listaEdges,
-      title: "Listir",
-      description: "Tenging listaverka við menningarlegt samhengi"
-    },
-  ];
+  const [expositions,   setExpositions]   = useState(null);
+  const [isSemantic,    setIsSemantic]    = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError,   setSearchError]   = useState("");
 
-  const g = graphs[active];
+  const [answer,       setAnswer]       = useState("");
+  const [answerLoading,setAnswerLoading] = useState(false);
+  const [answerError,  setAnswerError]   = useState("");
+  const [loadingMsg,   setLoadingMsg]    = useState("");
+
+  // Exposition conversation state
+  const [selectedIds,    setSelectedIds]    = useState(new Set());
+  const [expoQuery,      setExpoQuery]      = useState("");
+  const [expoConversation, setExpoConversation] = useState([]); // [{q, a}]
+  const [expoSystemCtx,  setExpoSystemCtx]  = useState("");    // fetched content, system prompt
+  const [expoCtxIds,     setExpoCtxIds]     = useState(null);  // Set snapshot for current ctx
+  const [expoLoading,    setExpoLoading]    = useState(false);
+  const [expoError,      setExpoError]      = useState("");
+  const [expoMsg,        setExpoMsg]        = useState("");
+
+  const conversationEndRef = useRef(null);
+
+  useEffect(() => {
+    if (expoConversation.length > 0) {
+      conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [expoConversation]);
+
+  const save = (key, setter, storageKey) => (val) => {
+    setter(val);
+    if (val) localStorage.setItem(storageKey, val);
+    else     localStorage.removeItem(storageKey);
+  };
+
+  const saveModel = (id) => {
+    setModelId(id);
+    localStorage.setItem("rc_model", id);
+  };
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    if (!expositions) return;
+    setSelectedIds(new Set(expositions.map(e => e.id)));
+  }, [expositions]);
+
+  const deselectAll = useCallback(() => setSelectedIds(new Set()), []);
+
+  const clearConversation = useCallback(() => {
+    setExpoConversation([]);
+    setExpoSystemCtx("");
+    setExpoCtxIds(null);
+    setExpoError("");
+    setExpoMsg("");
+  }, []);
+
+  const runSearch = useCallback(async (q) => {
+    if (!q.trim()) return;
+    setSearchLoading(true);
+    setSearchError("");
+    setAnswer("");
+    setAnswerError("");
+    setLoadingMsg("");
+    setExpositions([]);
+    setIsSemantic(false);
+    setSelectedIds(new Set());
+    setExpoConversation([]);
+    setExpoSystemCtx("");
+    setExpoCtxIds(null);
+    setExpoError("");
+    setExpoMsg("");
+
+    let results = [];
+    let semantic = false;
+
+    try {
+      if (semanticUrl) {
+        setLoadingMsg("Searching semantic index…");
+        results  = await fetchSemanticResults(semanticUrl, q);
+        semantic = true;
+      } else {
+        results = await fetchKeywordResults(q);
+      }
+      if (results.length > 0) console.log("First result:", results[0]);
+      setExpositions(results);
+      setIsSemantic(semantic);
+    } catch (e) {
+      setSearchError(e.message);
+      setSearchLoading(false);
+      setLoadingMsg("");
+      return;
+    }
+    setSearchLoading(false);
+    setLoadingMsg("");
+
+    if (results.length === 0) return;
+    if (!apiKey) {
+      setAnswerError("No API key set — open ⚙ settings and enter your Anthropic API key to get AI-generated answers.");
+      return;
+    }
+
+    setAnswerLoading(true);
+    try {
+      let context;
+
+      if (!semantic && deepSearch) {
+        const top = results.slice(0, DEEP_LIMIT);
+        const contentMap = {};
+        for (let i = 0; i < top.length; i++) {
+          setLoadingMsg(`Reading full content: exposition ${i + 1} of ${top.length}…`);
+          try {
+            const data = await fetchExpositionContent(top[i].id);
+            contentMap[top[i].id] = extractText(data);
+          } catch (e) {
+            console.warn(`Could not fetch content for ${top[i].id}:`, e.message);
+          }
+        }
+        context = buildContext(results, contentMap);
+      } else {
+        context = buildContext(results);
+      }
+
+      setLoadingMsg("Generating answer…");
+      const ans = await generateRAGAnswer(apiKey, q, context, semantic, modelId,
+        (attempt, total, waitMs) =>
+          setLoadingMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`));
+      setAnswer(ans);
+    } catch (e) {
+      setAnswerError(e.message);
+    } finally {
+      setAnswerLoading(false);
+      setLoadingMsg("");
+    }
+  }, [apiKey, semanticUrl, deepSearch, modelId]);
+
+  const queryExpositions = useCallback(async (e) => {
+    e.preventDefault();
+    if (!expoQuery.trim() || selectedIds.size === 0) return;
+    if (!apiKey) {
+      setExpoError("No API key set — open ⚙ settings and enter your Anthropic API key.");
+      return;
+    }
+
+    setExpoLoading(true);
+    setExpoError("");
+    const currentQuestion = expoQuery;
+
+    let systemCtx = expoSystemCtx;
+    let currentHistory = expoConversation;
+
+    // Fetch content if this is the first question or the selection has changed
+    if (!systemCtx || !setsEqual(selectedIds, expoCtxIds)) {
+      currentHistory = [];
+      setExpoConversation([]);
+
+      const selected = (expositions || []).filter(exp => selectedIds.has(exp.id));
+      const contentMap = {};
+      for (let i = 0; i < selected.length; i++) {
+        setExpoMsg(`Reading exposition ${i + 1} of ${selected.length}…`);
+        try {
+          const data = await fetchExpositionContent(selected[i].id);
+          contentMap[selected[i].id] = extractText(data);
+        } catch (err) {
+          console.warn(`Could not fetch content for ${selected[i].id}:`, err.message);
+        }
+      }
+
+      systemCtx = selected.map((exp, i) => {
+        const text = contentMap[exp.id] || exp.matchedText || "";
+        return [
+          `[${i + 1}] "${exp.title || "Untitled"}" — ${getAuthorName(exp)}`,
+          exp.created ? `Published: ${exp.created}` : "",
+          (exp.abstract || exp.description || "").slice(0, 500),
+          text
+            ? `Full content:\n${text.slice(0, EXPO_TEXT_MAX)}${text.length > EXPO_TEXT_MAX ? "…" : ""}`
+            : "",
+          `URL: ${getExpositionUrl(exp)}`,
+        ].filter(Boolean).join("\n");
+      }).join("\n\n---\n\n");
+
+      setExpoSystemCtx(systemCtx);
+      setExpoCtxIds(new Set(selectedIds));
+    }
+
+    setExpoQuery("");
+    setExpoMsg("Querying Claude…");
+    try {
+      const ans = await callClaudeConversation(
+        apiKey, systemCtx, currentHistory, currentQuestion, modelId,
+        (attempt, total, waitMs) =>
+          setExpoMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`),
+      );
+      setExpoConversation(prev => [...prev, { q: currentQuestion, a: ans }]);
+    } catch (err) {
+      setExpoError(err.message);
+      setExpoQuery(currentQuestion); // restore on error
+    } finally {
+      setExpoLoading(false);
+      setExpoMsg("");
+    }
+  }, [apiKey, expoQuery, expoConversation, expoSystemCtx, expoCtxIds, expositions, selectedIds, modelId]);
+
+  const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
+
+  const usingSemanticIndex = !!semanticUrl;
+  const numSelected = selectedIds.size;
+  const selectionChanged = expoConversation.length > 0 && !setsEqual(selectedIds, expoCtxIds);
 
   return (
-    <div style={{
-      width: "100vw", height: "100vh", overflow: "hidden",
-      background: "#ffffff",
-      fontFamily: theme.font,
-    }}>
-      {/* Tabs */}
-      <div style={{ position: "absolute", top: 18, right: 18, zIndex: 20, display: "flex", gap: 8 }}>
-        {graphs.map((gr, i) => (
-          <button key={i} onClick={() => setActive(i)} style={{
-            padding: "6px 14px",
-            fontFamily: theme.font,
-            fontSize: 12,
-            fontWeight: active === i ? 700 : 400,
-            background: active === i ? "#000000" : "#ffffff",
-            color: active === i ? "#ffffff" : "#000000",
-            border: "1px solid #000000",
-            borderRadius: 4,
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}>{gr.title}</button>
-        ))}
-      </div>
+    <div className="app">
+      <header className="app-header">
+        <div className="app-logo">RC</div>
+        <div className="header-text">
+          <h1 className="app-title">Research Catalogue · RAG Interface</h1>
+          <p className="app-subtitle">
+            Search and query artistic research expositions with AI-assisted retrieval
+          </p>
+        </div>
+      </header>
 
-      <SampoGraph key={active} {...g} />
+      <main className="app-main">
+        <form onSubmit={handleSubmit} className="search-form">
+          <input
+            className="search-input"
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Ask a question or search artistic research…"
+            disabled={searchLoading || answerLoading}
+            autoFocus
+          />
+          <button className="search-btn" type="submit"
+            disabled={searchLoading || answerLoading || !query.trim()}>
+            {searchLoading ? "…" : "Search"}
+          </button>
+          <button type="button"
+            className={`settings-toggle${showSettings ? " active" : ""}`}
+            onClick={() => setShowSettings(s => !s)}
+            title="Settings">
+            ⚙
+          </button>
+        </form>
+
+        <div className="search-options">
+          {usingSemanticIndex ? (
+            <span className="mode-badge mode-semantic">Semantic index active</span>
+          ) : (
+            <label className="deep-toggle">
+              <input type="checkbox" checked={deepSearch}
+                onChange={e => { setDeepSearch(e.target.checked); localStorage.setItem("rc_deep_search", e.target.checked ? "1" : ""); }} />
+              <span className="deep-label">Deep search</span>
+              <span className="deep-hint"> — reads full exposition content, not just abstracts (slower)</span>
+            </label>
+          )}
+        </div>
+
+        {showSettings && (
+          <div className="settings-panel">
+            <label className="settings-label">
+              Anthropic API Key <span className="settings-hint">(enables AI-generated answers)</span>
+            </label>
+            <div className="settings-input-wrap">
+              <input className="settings-input settings-input-key" type={showApiKey ? "text" : "password"} value={apiKey}
+                onChange={e => save("key", setApiKey, "rc_claude_key")(e.target.value)}
+                placeholder="sk-ant-api03-…" spellCheck={false} autoComplete="off" />
+              <button className="settings-reveal" onClick={() => setShowApiKey(s => !s)}
+                title={showApiKey ? "Hide key" : "Show key"}>
+                {showApiKey ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <label className="settings-label" style={{ marginTop: 16 }}>
+              Semantic Search API URL <span className="settings-hint">(optional — Vercel endpoint)</span>
+            </label>
+            <input className="settings-input" type="url" value={semanticUrl}
+              onChange={e => save("url", setSemanticUrl, "rc_semantic_url")(e.target.value)}
+              placeholder="https://your-project.vercel.app/api/search" spellCheck={false} />
+            <p className="settings-note">
+              Leave blank to use RC keyword search. Once the semantic index is built and
+              deployed, paste the Vercel API URL here to enable full-text semantic search.
+            </p>
+          </div>
+        )}
+
+        {searchError && <div className="search-error">{searchError}</div>}
+
+        <AnswerPanel answer={answer} loading={answerLoading}
+          loadingMsg={loadingMsg} error={answerError} />
+
+        {expositions !== null && !searchLoading && (
+          <section className="results-section">
+            <div className="results-header">
+              <h2 className="section-label">
+                {expositions.length === 0
+                  ? "No results found"
+                  : `${expositions.length} exposition${expositions.length !== 1 ? "s" : ""} retrieved`}
+              </h2>
+              {expositions.length > 0 && (
+                <div className="select-controls">
+                  <button className="select-btn" onClick={selectAll}
+                    disabled={numSelected === expositions.length}>
+                    Select all
+                  </button>
+                  {numSelected > 0 && (
+                    <button className="select-btn" onClick={deselectAll}>
+                      Deselect all
+                    </button>
+                  )}
+                  {numSelected > 0 && (
+                    <span className="select-count">{numSelected} selected</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="results-list">
+              {expositions.map((exp, i) => (
+                <ExpositionCard key={exp.id ?? i} exp={exp} index={i} semantic={isSemantic}
+                  selected={selectedIds.has(exp.id)} onToggle={toggleSelect} />
+              ))}
+            </div>
+
+            {expositions.length > 0 && (
+              <div className="expo-query-panel">
+                <div className="expo-query-header">
+                  <h3 className="expo-query-title">
+                    Query expositions in detail
+                    {numSelected > 0 && (
+                      <span className="expo-query-count">{numSelected} selected</span>
+                    )}
+                  </h3>
+                  {expoConversation.length > 0 && (
+                    <button className="expo-clear-btn" onClick={clearConversation}
+                      title="Clear conversation and start fresh">
+                      Clear conversation
+                    </button>
+                  )}
+                </div>
+
+                {selectionChanged && (
+                  <p className="expo-selection-note">
+                    Selection changed — your next question will start a new conversation with the updated set of expositions.
+                  </p>
+                )}
+
+                {expoConversation.length === 0 && !expoLoading && (
+                  <p className="expo-query-hint">
+                    {numSelected === 0
+                      ? "Select one or more expositions above (checkboxes), then ask a detailed question."
+                      : `Claude will read the full content of ${numSelected} exposition${numSelected !== 1 ? "s" : ""} and answer in detail.`}
+                  </p>
+                )}
+
+                {/* Conversation thread */}
+                {expoConversation.length > 0 && (
+                  <div className="expo-conversation">
+                    {expoConversation.map(({ q, a }, i) => (
+                      <div key={i} className="expo-exchange">
+                        <div className="expo-exchange-q">
+                          <span className="exchange-label">Q</span>
+                          <span className="exchange-text">{q}</span>
+                        </div>
+                        <div className="expo-exchange-a">
+                          <span className="exchange-label exchange-label-a">A</span>
+                          <div className="exchange-text"><ReactMarkdown>{a}</ReactMarkdown></div>
+                        </div>
+                      </div>
+                    ))}
+                    {expoLoading && (
+                      <div className="expo-exchange">
+                        <div className="expo-exchange-q">
+                          <span className="exchange-label">Q</span>
+                          <span className="exchange-text">{expoQuery || "…"}</span>
+                        </div>
+                        <p className="answer-loading expo-loading-inline">{expoMsg || "Generating…"}</p>
+                      </div>
+                    )}
+                    {expoError && <p className="answer-error" style={{ marginTop: 8 }}>{expoError}</p>}
+                    <div ref={conversationEndRef} />
+                  </div>
+                )}
+
+                {/* Loading state before first answer */}
+                {expoLoading && expoConversation.length === 0 && (
+                  <p className="answer-loading" style={{ marginBottom: 10 }}>{expoMsg || "Generating…"}</p>
+                )}
+                {expoError && expoConversation.length === 0 && (
+                  <p className="answer-error" style={{ marginBottom: 10 }}>{expoError}</p>
+                )}
+
+                <div className="expo-model-row">
+                  <div className="model-selector">
+                    {MODELS.map(m => (
+                      <button
+                        key={m.id}
+                        className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
+                        onClick={() => saveModel(m.id)}
+                        title={m.note}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="expo-model-note">
+                    Haiku is fastest but can be temporarily overloaded — switch to Sonnet if you see an error.
+                  </span>
+                </div>
+
+                <form className="expo-query-form" onSubmit={queryExpositions}>
+                  <input
+                    className="expo-query-input"
+                    type="text"
+                    value={expoQuery}
+                    onChange={e => setExpoQuery(e.target.value)}
+                    placeholder={expoConversation.length > 0
+                      ? "Ask a follow-up question…"
+                      : "Ask a detailed question about the selected expositions…"}
+                    disabled={expoLoading}
+                  />
+                  <button className="expo-query-btn" type="submit"
+                    disabled={expoLoading || numSelected === 0 || !expoQuery.trim()}>
+                    {expoLoading ? "…" : expoConversation.length > 0 ? "Send" : "Query"}
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
+        )}
+
+        {expositions === null && !searchLoading && (
+          <div className="landing">
+            <p className="landing-lead">
+              Query thousands of artistic research expositions from the{" "}
+              <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">
+                Research Catalogue
+              </a>.
+            </p>
+            <p className="landing-sub">Try one of these:</p>
+            <div className="example-list">
+              {EXAMPLES.map(q => (
+                <button key={q} className="example-btn"
+                  onClick={() => { setQuery(q); runSearch(q); }}>{q}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      <footer className="app-footer">
+        Data:{" "}
+        <a href="https://www.researchcatalogue.net" target="_blank" rel="noopener noreferrer">Research Catalogue</a>
+        {" · "}
+        <a href="https://rcdata.org" target="_blank" rel="noopener noreferrer">RCData</a>
+        {" · "}
+        Society for Artistic Research
+      </footer>
     </div>
   );
 }
