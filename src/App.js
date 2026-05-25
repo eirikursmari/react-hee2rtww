@@ -53,8 +53,11 @@ async function fetchSemanticResults(apiUrl, query, limit = 10) {
     body: JSON.stringify({ query, limit }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Semantic search returned ${res.status}`);
+    const body = await res.text().catch(() => "");
+    let parsed = {};
+    try { parsed = JSON.parse(body); } catch {}
+    const detail = parsed.error || body.slice(0, 200) || res.statusText;
+    throw new Error(`Semantic search ${res.status} (${res.url}): ${detail}`);
   }
   const data = await res.json();
   return data.results ?? [];
