@@ -1,9 +1,0 @@
-{
-  "name": "rc-search-api",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "openai": "^4.24.0"
-  }
-}
