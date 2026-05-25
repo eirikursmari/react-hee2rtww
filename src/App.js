@@ -291,25 +291,33 @@ function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }
 }
 
 const FILTER_OPTIONS = [
-  { label: "Research Approach", key: "research_approach", values: [
-    "practice-based", "theoretical", "collaborative", "participatory",
-    "autoethnographic", "speculative", "performative", "experimental",
-    "historical", "comparative",
-  ]},
-  { label: "Artistic Medium", key: "artistic_medium", values: [
-    "performance", "sound", "video", "installation", "painting",
-    "ceramics", "drawing", "photography", "text", "textile",
-    "sculpture", "digital", "architecture",
-  ]},
-  { label: "Methodological Framing", key: "methodological_framing", values: [
-    "phenomenological", "material", "archival", "ethnographic",
-    "process-based", "embodied", "relational", "site-specific",
-  ]},
-  { label: "Impact Type", key: "impact_types", values: [
-    "community engagement", "cultural preservation", "environmental",
-    "social justice", "health and wellbeing", "education",
-    "cross-cultural dialogue", "public space", "policy influence", "economic",
-  ]},
+  { label: "Research Approach", key: "research_approach",
+    tip: "How the artist approaches the research process. 'Practice-based' means the art-making itself is the research method.",
+    values: [
+      "practice-based", "theoretical", "collaborative", "participatory",
+      "autoethnographic", "speculative", "performative", "experimental",
+      "historical", "comparative",
+    ]},
+  { label: "Artistic Medium", key: "artistic_medium",
+    tip: "The primary material, form, or medium of the work.",
+    values: [
+      "performance", "sound", "video", "installation", "painting",
+      "ceramics", "drawing", "photography", "text", "textile",
+      "sculpture", "digital", "architecture",
+    ]},
+  { label: "Methodological Framing", key: "methodological_framing",
+    tip: "The theoretical or philosophical lens through which the research is framed.",
+    values: [
+      "phenomenological", "material", "archival", "ethnographic",
+      "process-based", "embodied", "relational", "site-specific",
+    ]},
+  { label: "Impact Type", key: "impact_types",
+    tip: "Documented or intended societal impact beyond the immediate research context.",
+    values: [
+      "community engagement", "cultural preservation", "environmental",
+      "social justice", "health and wellbeing", "education",
+      "cross-cultural dialogue", "public space", "policy influence", "economic",
+    ]},
 ];
 
 const EXAMPLES = [
@@ -622,26 +630,33 @@ export default function App() {
 
         <div className="search-options">
           {semanticUrl ? (
-            <div className="mode-toggle-wrap">
-              <button
-                className={`mode-toggle-btn${useSemanticSearch ? " mode-toggle-active" : ""}`}
-                onClick={() => { setUseSemanticSearch(true);  localStorage.setItem("rc_use_semantic", "1"); }}
-              >Semantic</button>
-              <button
-                className={`mode-toggle-btn${!useSemanticSearch ? " mode-toggle-active" : ""}`}
-                onClick={() => { setUseSemanticSearch(false); localStorage.setItem("rc_use_semantic", "0"); }}
-              >Keyword</button>
+            <div className="mode-row">
+              <span className="mode-row-label">Search mode</span>
+              <div className="mode-toggle-wrap">
+                <button
+                  className={`mode-toggle-btn${useSemanticSearch ? " mode-toggle-active" : ""}`}
+                  onClick={() => { setUseSemanticSearch(true); localStorage.setItem("rc_use_semantic", "1"); }}
+                  title="Searches the full text of all expositions by meaning. Finds conceptually related content even without exact keyword matches. Supports category filters."
+                >Semantic</button>
+                <button
+                  className={`mode-toggle-btn${!useSemanticSearch ? " mode-toggle-active" : ""}`}
+                  onClick={() => { setUseSemanticSearch(false); localStorage.setItem("rc_use_semantic", "0"); }}
+                  title="Searches the Research Catalogue's own index by keyword — faster but limited to titles, abstracts and keywords. No category filters."
+                >Keyword</button>
+              </div>
               {!useSemanticSearch && (
-                <label className="deep-toggle" style={{ marginLeft: 12 }}>
+                <label className="deep-toggle"
+                  title="Fetches and reads the full text of the top results before generating the AI answer. Slower but gives much richer responses.">
                   <input type="checkbox" checked={deepSearch}
                     onChange={e => { setDeepSearch(e.target.checked); localStorage.setItem("rc_deep_search", e.target.checked ? "1" : ""); }} />
-                  <span className="deep-label">Deep</span>
+                  <span className="deep-label">Deep search</span>
                   <span className="deep-hint"> — reads full content (slower)</span>
                 </label>
               )}
             </div>
           ) : (
-            <label className="deep-toggle">
+            <label className="deep-toggle"
+              title="Fetches and reads the full text of the top results before generating the AI answer. Slower but gives much richer responses.">
               <input type="checkbox" checked={deepSearch}
                 onChange={e => { setDeepSearch(e.target.checked); localStorage.setItem("rc_deep_search", e.target.checked ? "1" : ""); }} />
               <span className="deep-label">Deep search</span>
@@ -679,30 +694,45 @@ export default function App() {
         )}
 
         {semanticUrl && useSemanticSearch && (
-          <>
-            <div className="filter-bar">
-              <button
-                className={`filter-toggle-btn${showFilters ? " active" : ""}${hasFilters ? " filter-toggle-has" : ""}`}
-                onClick={() => setShowFilters(s => !s)}
-              >
-                {hasFilters ? `Filters (${activeFilterCount})` : "Filters"}
-              </button>
-              {hasFilters && (
-                <button className="filter-clear-inline" onClick={clearFilters}>Clear</button>
-              )}
-              {savedCategories.length > 0 && <span className="filter-bar-sep" />}
-              {savedCategories.map(cat => (
-                <button key={cat.id} className="saved-cat-chip" onClick={() => applyCategory(cat)}>
-                  {cat.name}
+          <div className="filter-section">
+            <div className="filter-section-header">
+              <div className="filter-section-left">
+                <button
+                  className={`filter-toggle-btn${showFilters ? " active" : ""}${hasFilters ? " filter-toggle-has" : ""}`}
+                  onClick={() => setShowFilters(s => !s)}
+                  title="Filter semantic search results by automatically extracted categories such as research approach, medium, and impact type."
+                >
+                  {showFilters ? "▲" : "▼"} {hasFilters ? `Semantic filters (${activeFilterCount} active)` : "Semantic filters"}
                 </button>
-              ))}
+                {hasFilters && (
+                  <button className="filter-clear-inline" onClick={clearFilters}>Clear all</button>
+                )}
+              </div>
+              {savedCategories.length > 0 && (
+                <div className="filter-section-cats">
+                  <span className="filter-cats-label">Saved:</span>
+                  {savedCategories.map(cat => (
+                    <button
+                      key={cat.id}
+                      className="saved-cat-chip"
+                      onClick={() => applyCategory(cat)}
+                      title={Object.entries(cat.filters).map(([k, v]) => `${k}: ${v.join(", ")}`).join("\n")}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {showFilters && (
               <div className="filter-panel">
-                {FILTER_OPTIONS.map(({ label, key, values }) => (
+                <p className="filter-panel-note">
+                  Filters apply to semantic search only. Select one or more values — within a category results match <em>any</em> selected value; across categories all must match. Categories are extracted automatically from exposition content by AI.
+                </p>
+                {FILTER_OPTIONS.map(({ label, key, tip, values }) => (
                   <div key={key} className="filter-group">
-                    <span className="filter-group-label">{label}</span>
+                    <span className="filter-group-label" title={tip}>{label} <span className="filter-tip-icon" title={tip}>?</span></span>
                     <div className="filter-chips">
                       {values.map(val => {
                         const active = (filters[key] || []).includes(val);
@@ -725,13 +755,14 @@ export default function App() {
                     className="filter-save-input"
                     value={newCatName}
                     onChange={e => setNewCatName(e.target.value)}
-                    placeholder="Name this filter set…"
+                    placeholder="Name this filter combination to save as a custom category…"
                     onKeyDown={e => e.key === "Enter" && saveCategory()}
                   />
                   <button
                     className="filter-save-btn"
                     onClick={saveCategory}
                     disabled={!newCatName.trim() || !hasFilters}
+                    title="Save the current filter selection as a named category for quick reuse."
                   >
                     Save as category
                   </button>
@@ -743,10 +774,14 @@ export default function App() {
                     <div className="filter-chips">
                       {savedCategories.map(cat => (
                         <span key={cat.id} className="saved-cat-row">
-                          <button className="filter-chip" onClick={() => applyCategory(cat)}>
+                          <button
+                            className="filter-chip"
+                            onClick={() => applyCategory(cat)}
+                            title={Object.entries(cat.filters).map(([k, v]) => `${k}: ${v.join(", ")}`).join("\n")}
+                          >
                             {cat.name}
                           </button>
-                          <button className="saved-cat-delete" onClick={() => deleteCategory(cat.id)}>×</button>
+                          <button className="saved-cat-delete" onClick={() => deleteCategory(cat.id)} title="Delete category">×</button>
                         </span>
                       ))}
                     </div>
@@ -754,7 +789,7 @@ export default function App() {
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {searchError && <div className="search-error">{searchError}</div>}
