@@ -151,7 +151,22 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mode-row-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #888;
 }
 
 .deep-toggle {
@@ -250,7 +265,73 @@ a:hover {
   background: #f5f5f5;
 }
 
-/* ── Filter bar & panel ── */
+/* ── Filter section ── */
+
+.filter-section {
+  margin-bottom: 14px;
+  border: 1px solid #e0e0e0;
+}
+
+.filter-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-bottom: 1px solid transparent;
+}
+
+.filter-section-header:has(+ .filter-panel) {
+  border-bottom-color: #e0e0e0;
+}
+
+.filter-section-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-section-cats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-cats-label {
+  font-size: 11px;
+  color: #888;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.filter-panel-note {
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+  margin: 0 0 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ebebeb;
+}
+
+.filter-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid #bbb;
+  font-size: 9px;
+  color: #999;
+  cursor: help;
+  vertical-align: middle;
+  margin-left: 3px;
+  font-style: normal;
+}
 
 .filter-bar {
   display: flex;
@@ -311,9 +392,7 @@ a:hover {
 }
 
 .filter-panel {
-  margin-top: 10px;
   padding: 14px 16px;
-  border: 1px solid #e0e0e0;
   background: #fafafa;
   display: flex;
   flex-direction: column;
