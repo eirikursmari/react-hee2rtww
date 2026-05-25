@@ -135,8 +135,11 @@ def extract_pages(data: dict) -> list[dict]:
 
     for page_id, page in items:
         texts = []
+        tools = page.get("tools", page)  # tools nested under "tools" key
+        if not isinstance(tools, dict):
+            tools = page
         for tool_type in ("tool-text", "tool-simpletext"):
-            for tool in page.get(tool_type, []):
+            for tool in tools.get(tool_type, []):
                 text = strip_html(tool.get("content", ""))
                 if text:
                     texts.append(text)

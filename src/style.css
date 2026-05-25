@@ -207,6 +207,34 @@ a:hover {
   color: #fff;
 }
 
+.mode-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.mode-toggle-btn {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 3px 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+}
+
+.mode-toggle-btn:first-child {
+  border-right: none;
+}
+
+.mode-toggle-btn.mode-toggle-active {
+  background: #000;
+  border-color: #000;
+  color: #fff;
+}
+
 .mode-badge {
   font-size: 11px;
   font-weight: 700;
@@ -220,6 +248,163 @@ a:hover {
   border-color: #000;
   color: #000;
   background: #f5f5f5;
+}
+
+/* ── Filter bar & panel ── */
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.filter-toggle-btn {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 3px 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+}
+
+.filter-toggle-btn.active,
+.filter-toggle-btn.filter-toggle-has {
+  border-color: #000;
+  color: #000;
+}
+
+.filter-toggle-btn.filter-toggle-has {
+  background: #000;
+  color: #fff;
+}
+
+.filter-clear-inline {
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #888;
+  cursor: pointer;
+}
+
+.filter-bar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  background: #ddd;
+  margin: 0 2px;
+}
+
+.saved-cat-chip {
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px solid #000;
+  background: #f5f5f5;
+  color: #000;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.filter-panel {
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid #e0e0e0;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #888;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.filter-chip {
+  font-size: 12px;
+  padding: 3px 9px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #444;
+  cursor: pointer;
+}
+
+.filter-chip-active {
+  background: #000;
+  border-color: #000;
+  color: #fff;
+}
+
+.saved-cat-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.saved-cat-delete {
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  border: 1px solid #ccc;
+  border-left: none;
+  background: #fff;
+  color: #aaa;
+  cursor: pointer;
+}
+
+.filter-save-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid #e8e8e8;
+}
+
+.filter-save-input {
+  flex: 1;
+  font-size: 13px;
+  padding: 5px 9px;
+  border: 1px solid #ccc;
+  background: #fff;
+  outline: none;
+}
+
+.filter-save-btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border: 1px solid #000;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filter-save-btn:disabled {
+  background: #ccc;
+  border-color: #ccc;
+  cursor: default;
 }
 
 /* ── Semantic match excerpt ── */
