@@ -46,7 +46,9 @@ async function fetchKeywordResults(query) {
   return data.expositions ?? data.results ?? [];
 }
 
-async function fetchSemanticResults(apiUrl, query, limit = 10) {
+async function fetchSemanticResults(rawUrl, query, limit = 10) {
+  // Strip angle brackets that appear when URLs are copy-pasted from chat/markdown
+  const apiUrl = rawUrl.replace(/^[<\s]+|[>\s]+$/g, "");
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -331,9 +333,10 @@ export default function App() {
   }, [expoConversation]);
 
   const save = (key, setter, storageKey) => (val) => {
-    setter(val);
-    if (val) localStorage.setItem(storageKey, val);
-    else     localStorage.removeItem(storageKey);
+    const clean = typeof val === "string" ? val.replace(/^[<\s]+|[>\s]+$/g, "") : val;
+    setter(clean);
+    if (clean) localStorage.setItem(storageKey, clean);
+    else       localStorage.removeItem(storageKey);
   };
 
   const saveModel = (id) => {
