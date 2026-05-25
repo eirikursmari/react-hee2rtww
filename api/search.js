@@ -1,15 +1,12 @@
 /**
  * Vercel Serverless Function — Semantic Search API
+ * CommonJS module (no "type":"module" in package.json, so .js = CJS)
  *
- * POST /api/search
- * Body: { "query": "...", "limit": 10 }
- *
- * Uses raw fetch (Node 18 built-in) — no npm dependencies needed.
- * Set env vars OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
- * in Vercel dashboard → Project → Settings → Environment Variables.
+ * POST /api/search   Body: { "query": "...", "limit": 10 }
+ * Env:  OPENAI_API_KEY  SUPABASE_URL  SUPABASE_SERVICE_KEY
  */
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin",  "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -19,34 +16,40 @@ export default async function handler(req, res) {
   if (req.method === "GET")     return res.json({ status: "RC Semantic Search API — POST {query, limit} to search" });
   if (req.method !== "POST")   return res.status(405).json({ error: "POST required" });
 
-  const { query, limit = 10 } = req.body ?? {};
-  if (!query?.trim()) return res.status(400).json({ error: "query is required" });
+  const body  = req.body ?? {};
+  const query = body.query;
+  const limit = body.limit ?? 10;
+
+  if (!query || !String(query).trim()) {
+    return res.status(400).json({ error: "query is required" });
+  }
 
   try {
-    // 1. Embed via OpenAI REST API (no sdk needed)
+    // 1. Embed via OpenAI REST
     const embRes = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
+      method:  "POST",
       headers: {
         "Content-Type":  "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
       },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: query.trim() }),
+      body: JSON.stringify({ model: "text-embedding-3-small", input: String(query).trim() }),
     });
     if (!embRes.ok) {
       const e = await embRes.json().catch(() => ({}));
-      throw new Error(`OpenAI ${embRes.status}: ${e.error?.message ?? embRes.statusText}`);
+      throw new Error("OpenAI " + embRes.status + ": " + (e.error && e.error.message ? e.error.message : embRes.statusText));
     }
-    const { data: [{ embedding }] } = await embRes.json();
+    const embJson   = await embRes.json();
+    const embedding = embJson.data[0].embedding;
 
-    // 2. Vector search via Supabase REST API (no sdk needed)
+    // 2. Vector search via Supabase REST
     const sbRes = await fetch(
-      `${process.env.SUPABASE_URL}/rest/v1/rpc/match_exposition_chunks`,
+      process.env.SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks",
       {
-        method: "POST",
+        method:  "POST",
         headers: {
           "Content-Type":  "application/json",
           "apikey":        process.env.SUPABASE_SERVICE_KEY,
-          "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+          "Authorization": "Bearer " + process.env.SUPABASE_SERVICE_KEY,
         },
         body: JSON.stringify({
           query_embedding: embedding,
@@ -57,37 +60,39 @@ export default async function handler(req, res) {
     );
     if (!sbRes.ok) {
       const e = await sbRes.json().catch(() => ({}));
-      throw new Error(`Supabase ${sbRes.status}: ${e.message ?? sbRes.statusText}`);
+      throw new Error("Supabase " + sbRes.status + ": " + (e.message || sbRes.statusText));
     }
     const rows = await sbRes.json();
 
-    // 3. Deduplicate — keep best chunk per exposition
+    // 3. Deduplicate — best chunk per exposition
     const best = new Map();
-    for (const row of rows ?? []) {
+    for (const row of rows || []) {
       const prev = best.get(row.exposition_id);
       if (!prev || row.similarity > prev.similarity) best.set(row.exposition_id, row);
     }
 
     // 4. Sort, slice, shape
-    const results = [...best.values()]
-      .sort((a, b) => b.similarity - a.similarity)
+    const results = Array.from(best.values())
+      .sort(function(a, b) { return b.similarity - a.similarity; })
       .slice(0, limit)
-      .map((row) => ({
-        id:          row.exposition_id,
-        title:       row.title,
-        author:      row.author,
-        abstract:    row.abstract,
-        keywords:    row.keywords ?? [],
-        created:     row.created_at,
-        url:         row.url,
-        similarity:  Math.round(row.similarity * 1000) / 1000,
-        matchedText: row.text,
-      }));
+      .map(function(row) {
+        return {
+          id:          row.exposition_id,
+          title:       row.title,
+          author:      row.author,
+          abstract:    row.abstract,
+          keywords:    row.keywords || [],
+          created:     row.created_at,
+          url:         row.url,
+          similarity:  Math.round(row.similarity * 1000) / 1000,
+          matchedText: row.text,
+        };
+      });
 
-    return res.json({ results });
+    return res.json({ results: results });
 
   } catch (err) {
     console.error("Search error:", err);
-    return res.status(500).json({ error: err.message ?? "Internal error" });
+    return res.status(500).json({ error: err.message || "Internal error" });
   }
-}
+};
