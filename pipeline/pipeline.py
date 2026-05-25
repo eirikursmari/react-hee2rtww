@@ -40,6 +40,7 @@ import logging
 import argparse
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -228,119 +229,86 @@ def fetch_expo_json(expo_id: int) -> Optional[dict]:
         log.error("  Failed to fetch %d: %s", expo_id, e)
         return None
 
+# ── Schema loading ────────────────────────────────────────────────────────────
+
+def load_schema(sb: Optional[Client] = None) -> dict:
+    """Load extraction schema: try Supabase pipeline_config first, fall back to local JSON."""
+    if sb:
+        try:
+            r = sb.table("pipeline_config").select("value").eq("key", "extraction_schema").execute()
+            if r.data:
+                log.info("Loaded extraction schema from Supabase")
+                return r.data[0]["value"]
+        except Exception as e:
+            log.warning("Could not load schema from Supabase (%s), trying local file", e)
+
+    local = Path(__file__).parent / "extraction_schema.json"
+    if local.exists():
+        with open(local) as f:
+            schema = json.load(f)
+        log.info("Loaded extraction schema from %s", local)
+        return schema
+
+    log.error("No extraction schema found — create pipeline/extraction_schema.json")
+    sys.exit(1)
+
+
+def build_schema_string(schema: dict) -> str:
+    """Generate the JSON schema string for the extraction prompt."""
+    lines = ["{"]
+    for dim in schema.get("array_dimensions", []):
+        lines.append(f'  "{dim["key"]}": [],')
+        lines.append(f'    // {dim["prompt"]}')
+        lines.append("")
+    for dim in schema.get("text_dimensions", []):
+        lines.append(f'  "{dim["key"]}": null,')
+        lines.append(f'    // {dim["prompt"]}')
+        lines.append("")
+    for dim in schema.get("custom_dimensions", []):
+        default = "[]" if dim.get("type") == "array" else "null"
+        lines.append(f'  "{dim["key"]}": {default},')
+        lines.append(f'    // {dim.get("prompt", dim.get("label", dim["key"]))}')
+        lines.append("")
+    for key, nested in schema.get("nested_dimensions", {}).items():
+        fields = {k: "null" for k in nested.get("fields", {})}
+        lines.append(f'  "{key}": {json.dumps(fields)},')
+        lines.append(f'    // {nested.get("prompt", "")}')
+        lines.append("")
+    lines.append("}")
+    return "\n".join(lines)
+
 # ── Metadata extraction via Claude ────────────────────────────────────────────
 
-EXTRACTION_SYSTEM = """\
-You are a research analyst specialising in artistic research. Extract structured
-metadata from exposition texts for the Research Catalogue (researchcatalogue.net).
-
-Return ONLY a valid JSON object — no prose, no markdown fences. Use null for
-fields where the information is not present. Be conservative: only include what
-is explicitly stated or clearly demonstrated in the text.
-
-For societal impact, carefully distinguish:
-- "potential" impact: what the artist intends or hopes to achieve beyond the
-  artistic/research context.
-- "actual" impact: outcomes that are documented as having already occurred —
-  partnerships formed, communities affected, events held, policy changes noted.
-"""
-
-EXTRACTION_SCHEMA = """\
-{
-  "research_approach": [],
-    // Array. Choose from: practice-based, theoretical, collaborative,
-    // participatory, autoethnographic, speculative, performative,
-    // experimental, historical, comparative. Add others if clearly applicable.
-
-  "artistic_medium": [],
-    // Array. E.g.: performance, sound, video, installation, painting,
-    // ceramics, drawing, photography, text, textile, sculpture, digital,
-    // architecture. Add others if clearly applicable.
-
-  "methodological_framing": [],
-    // Array. E.g.: phenomenological, material, archival, ethnographic,
-    // process-based, embodied, relational, site-specific.
-
-  "geographic_context": [],
-    // Array of countries, regions, or named cultural contexts explicitly
-    // referenced. Empty array if none mentioned.
-
-  "research_question": null,
-    // String. The central research question, stated or clearly implied.
-
-  "methods_described": null,
-    // String. Brief summary of the methods or working processes used.
-
-  "key_findings": null,
-    // String. Key findings, contributions, or outcomes of the research.
-
-  "materials_tools": null,
-    // String. Notable materials, tools, or technologies used.
-
-  "theoretical_refs": null,
-    // String. Key theorists, artists, or works explicitly referenced.
-
-  "impact_types": [],
-    // Array. Choose from: community engagement, cultural preservation,
-    // environmental, social justice, health and wellbeing, education,
-    // cross-cultural dialogue, public space, policy influence, economic.
-    // Empty array if no societal impact dimension is present.
-
-  "impact_scope": null,
-    // String. One of: local, regional, national, global.
-    // null if no societal impact is present.
-
-  "impact_evidence_level": null,
-    // String. One of:
-    //   stated_intent        — author expresses societal goals or intentions
-    //   demonstrated         — outcomes described within the exposition itself
-    //   externally_validated — third-party recognition, commissions, or
-    //                          institutional uptake mentioned
-    // Use the highest level that applies. null if no impact present.
-
-  "impact_potential": {
-    "beneficiaries": null,   // intended communities or groups
-    "goals": null,           // stated societal goals beyond the research context
-    "applications": null     // proposed future uses or applications
-  },
-
-  "impact_actual": {
-    "outcomes": null,          // documented outcomes or effects that have occurred
-    "communities": null,       // communities or institutions actually reached
-    "partnerships": null,      // collaborations or partnerships formed
-    "policy_changes": null,    // changes to practice, policy, or public space
-    "public_engagement": null  // public events, exhibitions, or activities documented
-  }
-}"""
-
-
-def build_extraction_prompt(title: str, author: str, abstract: str, body: str) -> str:
-    excerpt = body[:EXTRACT_TEXT_MAX] if body else ""
-    truncated = "…[truncated]" if len(body) > EXTRACT_TEXT_MAX else ""
+def build_extraction_prompt(title: str, author: str, abstract: str, body: str,
+                            schema: Optional[dict] = None) -> str:
+    schema_str = build_schema_string(schema) if schema else ""
+    excerpt    = body[:EXTRACT_TEXT_MAX] if body else ""
+    truncated  = "…[truncated]" if len(body) > EXTRACT_TEXT_MAX else ""
     return (
         f"Title: {title}\n"
         f"Author: {author}\n"
         f"Abstract: {abstract[:800] if abstract else '(none)'}\n"
         f"Content: {excerpt}{truncated}\n\n"
-        f"Extract metadata using this JSON structure:\n{EXTRACTION_SCHEMA}"
+        f"Extract metadata using this JSON structure:\n{schema_str}"
     )
 
 
 def extract_metadata(anthropic_client, title: str, author: str,
-                     abstract: str, body: str) -> Optional[dict]:
+                     abstract: str, body: str,
+                     schema: Optional[dict] = None) -> Optional[dict]:
     """Call Claude Haiku to extract structured metadata. Returns dict or None."""
+    system = schema.get("system_prompt", "") if schema else ""
     try:
         resp = anthropic_client.messages.create(
             model=EXTRACTION_MODEL,
             max_tokens=1024,
-            system=EXTRACTION_SYSTEM,
+            system=system,
             messages=[{
                 "role": "user",
-                "content": build_extraction_prompt(title, author, abstract, body),
+                "content": build_extraction_prompt(title, author, abstract, body, schema),
             }],
         )
         raw = resp.content[0].text.strip()
-        # Strip accidental markdown fences
         if raw.startswith("```"):
             parts = raw.split("```")
             raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw
@@ -374,7 +342,16 @@ def _clean_impact_block(val) -> Optional[dict]:
 
 # ── Supabase writes ───────────────────────────────────────────────────────────
 
-def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None):
+STANDARD_ARRAY_KEYS = {"research_approach", "artistic_medium", "methodological_framing",
+                       "geographic_context", "impact_types"}
+STANDARD_TEXT_KEYS  = {"research_question", "methods_described", "key_findings",
+                       "materials_tools", "theoretical_refs", "impact_scope",
+                       "impact_evidence_level"}
+STANDARD_NESTED_KEYS = {"impact_potential", "impact_actual"}
+
+
+def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None,
+                      schema: Optional[dict] = None):
     row = {
         "id":         expo["id"],
         "title":      expo.get("title", "Untitled"),
@@ -387,23 +364,25 @@ def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None):
     }
 
     if metadata:
-        row.update({
-            "research_approach":      _clean_array(metadata.get("research_approach")),
-            "artistic_medium":        _clean_array(metadata.get("artistic_medium")),
-            "methodological_framing": _clean_array(metadata.get("methodological_framing")),
-            "geographic_context":     _clean_array(metadata.get("geographic_context")),
-            "research_question":      _clean_str(metadata.get("research_question")),
-            "methods_described":      _clean_str(metadata.get("methods_described")),
-            "key_findings":           _clean_str(metadata.get("key_findings")),
-            "materials_tools":        _clean_str(metadata.get("materials_tools")),
-            "theoretical_refs":       _clean_str(metadata.get("theoretical_refs")),
-            "impact_types":           _clean_array(metadata.get("impact_types")),
-            "impact_scope":           _clean_str(metadata.get("impact_scope")),
-            "impact_evidence_level":  _clean_str(metadata.get("impact_evidence_level")),
-            "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
-            "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
-            "extracted_at":           datetime.now(timezone.utc).isoformat(),
-        })
+        for k in STANDARD_ARRAY_KEYS:
+            row[k] = _clean_array(metadata.get(k))
+        for k in STANDARD_TEXT_KEYS:
+            row[k] = _clean_str(metadata.get(k))
+        for k in STANDARD_NESTED_KEYS:
+            row[k] = _clean_impact_block(metadata.get(k))
+        row["extracted_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Custom dimensions → custom_metadata JSONB
+        if schema:
+            custom = {}
+            for dim in schema.get("custom_dimensions", []):
+                key = dim["key"]
+                val = metadata.get(key)
+                if val is None:
+                    continue
+                custom[key] = _clean_array(val) if dim.get("type") == "array" else _clean_str(val)
+            if custom:
+                row["custom_metadata"] = custom
 
     sb.table("expositions").upsert(row).execute()
 
@@ -439,14 +418,14 @@ def needs_extraction(sb: Client, expo_id: int) -> bool:
 
 # ── Core indexing logic ───────────────────────────────────────────────────────
 
-def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=None):
+def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=None,
+                     schema: Optional[dict] = None):
     expo_id = expo["id"]
     title   = expo.get("title", "Untitled")[:70]
     log.info("  Fetching full JSON for '%s' (%d)", title, expo_id)
 
     content = fetch_expo_json(expo_id)
 
-    # Extract metadata if Anthropic client is available
     metadata = None
     if anthropic_client and content:
         pages    = extract_pages(content)
@@ -455,7 +434,7 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
         log.info("  Extracting metadata…")
         metadata = extract_metadata(
             anthropic_client, title,
-            author_name(expo.get("author")), abstract, body,
+            author_name(expo.get("author")), abstract, body, schema,
         )
         if metadata:
             log.info("  Extraction OK — approach: %s  impact: %s",
@@ -463,8 +442,7 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
                      metadata.get("impact_types", []))
         time.sleep(CLAUDE_DELAY)
 
-    # Always store exposition metadata (with or without extraction)
-    upsert_exposition(sb, expo, metadata)
+    upsert_exposition(sb, expo, metadata, schema)
 
     if not content:
         return
@@ -536,6 +514,11 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client):
 
 def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None):
     openai, sb, anthropic_client = get_clients()
+    schema = load_schema(sb)
+    log.info("Schema loaded — %d array + %d text + %d custom dimensions",
+             len(schema.get("array_dimensions", [])),
+             len(schema.get("text_dimensions", [])),
+             len(schema.get("custom_dimensions", [])))
 
     expositions = fetch_internal_research()
     log.info("Found %d expositions in master list", len(expositions))
@@ -568,7 +551,7 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
                 sys.exit(1)
             log.info("%s Extracting %d", prefix, expo_id)
             try:
-                extract_only_exposition(sb, expo, anthropic_client)
+                extract_only_exposition(sb, expo, anthropic_client, schema)
                 done += 1
             except Exception as e:
                 log.error("%s Failed %d: %s", prefix, expo_id, e)
@@ -580,7 +563,7 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
                 continue
             log.info("%s Indexing %d", prefix, expo_id)
             try:
-                index_exposition(openai, sb, expo, anthropic_client)
+                index_exposition(openai, sb, expo, anthropic_client, schema)
                 done += 1
             except Exception as e:
                 log.error("%s Failed %d: %s", prefix, expo_id, e)

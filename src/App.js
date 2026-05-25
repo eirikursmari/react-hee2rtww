@@ -46,8 +46,7 @@ async function fetchKeywordResults(query) {
   return data.expositions ?? data.results ?? [];
 }
 
-async function fetchSemanticResults(rawUrl, query, limit = 10, filters = {}) {
-  // Strip angle brackets that appear when URLs are copy-pasted from chat/markdown
+async function fetchSemanticResults(rawUrl, query, limit = 10, filters = {}, customCategories = []) {
   const apiUrl = rawUrl.replace(/^[<\s]+|[>\s]+$/g, "");
   const activeFilters = Object.fromEntries(
     Object.entries(filters).filter(([, v]) => Array.isArray(v) && v.length > 0)
@@ -55,7 +54,7 @@ async function fetchSemanticResults(rawUrl, query, limit = 10, filters = {}) {
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit, filters: activeFilters }),
+    body: JSON.stringify({ query, limit, filters: activeFilters, customCategories }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -343,6 +342,23 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
   const [newCatName,       setNewCatName]        = useState("");
+  const [filterOptions,    setFilterOptions]     = useState(FILTER_OPTIONS);
+
+  // Custom semantic categories
+  const [customCats,          setCustomCats]          = useState(() => {
+    try { return JSON.parse(localStorage.getItem("rc_custom_cats") || "[]"); } catch { return []; }
+  });
+  const [activeCustomCatIds,  setActiveCustomCatIds]  = useState(new Set());
+  const [newCustomCatName,    setNewCustomCatName]    = useState("");
+  const [newCustomCatDesc,    setNewCustomCatDesc]    = useState("");
+  const [showCustomCatForm,   setShowCustomCatForm]   = useState(false);
+
+  // Schema upload
+  const [schemaDoc,           setSchemaDoc]           = useState(null);
+  const [schemaGenerating,    setSchemaGenerating]    = useState(false);
+  const [schemaResult,        setSchemaResult]        = useState(null);
+  const [schemaError,         setSchemaError]         = useState("");
+  const schemaFileRef = useRef(null);
   const [showApiKey,  setShowApiKey]  = useState(false);
 
   const [expositions,   setExpositions]   = useState(null);
@@ -372,6 +388,21 @@ export default function App() {
       conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [expoConversation]);
+
+  // Fetch live filter config from the edge function so new schema dimensions
+  // appear without redeploying the app.
+  useEffect(() => {
+    if (!semanticUrl) return;
+    const url = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "");
+    fetch(url)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.filterConfig && Array.isArray(data.filterConfig) && data.filterConfig.length > 0) {
+          setFilterOptions(data.filterConfig);
+        }
+      })
+      .catch(() => {});
+  }, [semanticUrl]);
 
   const save = (key, setter, storageKey) => (val) => {
     const clean = typeof val === "string" ? val.replace(/^[<\s]+|[>\s]+$/g, "") : val;
@@ -431,6 +462,67 @@ export default function App() {
 
   const applyCategory = (cat) => setFilters({ ...cat.filters });
 
+  const toggleCustomCat = (id) => {
+    setActiveCustomCatIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const addCustomCat = () => {
+    if (!newCustomCatName.trim() || !newCustomCatDesc.trim()) return;
+    const cat = { id: Date.now(), name: newCustomCatName.trim(), description: newCustomCatDesc.trim() };
+    const updated = [...customCats, cat];
+    setCustomCats(updated);
+    localStorage.setItem("rc_custom_cats", JSON.stringify(updated));
+    setNewCustomCatName("");
+    setNewCustomCatDesc("");
+    setShowCustomCatForm(false);
+  };
+
+  const deleteCustomCat = (id) => {
+    setActiveCustomCatIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+    const updated = customCats.filter(c => c.id !== id);
+    setCustomCats(updated);
+    localStorage.setItem("rc_custom_cats", JSON.stringify(updated));
+  };
+
+  const generateSchema = async () => {
+    if (!schemaDoc || !semanticUrl) return;
+    setSchemaGenerating(true);
+    setSchemaResult(null);
+    setSchemaError("");
+    const isPdf = schemaDoc.type === "application/pdf";
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const raw     = e.target.result;
+        const content = isPdf ? raw.split(",")[1] : raw;
+        const builderUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/schema-builder");
+        const res = await fetch(builderUrl, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: { type: isPdf ? "pdf" : "text", content }, filename: schemaDoc.name }),
+        });
+        if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+        const data = await res.json();
+        setSchemaResult(data);
+        // Refresh filter options
+        const searchRes = await fetch(semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "")).catch(() => null);
+        if (searchRes?.ok) {
+          const searchData = await searchRes.json().catch(() => ({}));
+          if (searchData?.filterConfig?.length) setFilterOptions(searchData.filterConfig);
+        }
+      } catch (err) {
+        setSchemaError(err.message);
+      } finally {
+        setSchemaGenerating(false);
+      }
+    };
+    isPdf ? reader.readAsDataURL(schemaDoc) : reader.readAsText(schemaDoc);
+  };
+
   const clearConversation = useCallback(() => {
     setExpoConversation([]);
     setExpoSystemCtx("");
@@ -461,7 +553,10 @@ export default function App() {
     try {
       if (semanticUrl && useSemanticSearch) {
         setLoadingMsg("Searching semantic index…");
-        results  = await fetchSemanticResults(semanticUrl, q, 10, filters);
+        const activeCats = customCats
+          .filter(c => activeCustomCatIds.has(c.id))
+          .map(c => ({ description: c.description }));
+        results  = await fetchSemanticResults(semanticUrl, q, 10, filters, activeCats);
         semantic = true;
       } else {
         results = await fetchKeywordResults(q);
@@ -516,7 +611,7 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId, filters]);
+  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId, filters, customCats, activeCustomCatIds]);
 
   const queryExpositions = useCallback(async (e) => {
     e.preventDefault();
@@ -688,8 +783,62 @@ export default function App() {
               placeholder="https://your-project.vercel.app/api/search" spellCheck={false} />
             <p className="settings-note">
               Leave blank to use RC keyword search. Once the semantic index is built and
-              deployed, paste the Vercel API URL here to enable full-text semantic search.
+              deployed, paste the Supabase edge function URL here to enable full-text semantic search.
             </p>
+
+            {semanticUrl && (
+              <>
+                <label className="settings-label" style={{ marginTop: 20 }}>
+                  Extraction Schema <span className="settings-hint">(upload a document to add new research dimensions)</span>
+                </label>
+                <p className="settings-note">
+                  Upload a PDF or text document describing a research taxonomy or framework.
+                  Claude will analyze it and propose new metadata dimensions to extract from expositions.
+                  After generating, run <code>python3 pipeline.py --extract-only --force</code> on the server to apply.
+                </p>
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.md"
+                  ref={schemaFileRef}
+                  style={{ display: "none" }}
+                  onChange={e => { setSchemaDoc(e.target.files[0] || null); setSchemaResult(null); setSchemaError(""); }}
+                />
+                <div className="schema-upload-row">
+                  <button className="schema-file-btn" onClick={() => schemaFileRef.current?.click()}>
+                    {schemaDoc ? schemaDoc.name : "Choose document…"}
+                  </button>
+                  <button
+                    className="filter-save-btn"
+                    onClick={generateSchema}
+                    disabled={!schemaDoc || schemaGenerating}
+                  >
+                    {schemaGenerating ? "Analyzing…" : "Generate schema"}
+                  </button>
+                </div>
+                {schemaError && <p className="answer-error" style={{ marginTop: 8 }}>{schemaError}</p>}
+                {schemaResult && (
+                  <div className="schema-result">
+                    <p className="schema-result-summary">{schemaResult.summary}</p>
+                    {schemaResult.new_dimensions?.length > 0 ? (
+                      <>
+                        <p className="schema-result-label">New dimensions added ({schemaResult.new_dimensions.length}):</p>
+                        <ul className="schema-result-list">
+                          {schemaResult.new_dimensions.map(d => (
+                            <li key={d.key}>
+                              <strong>{d.label}</strong> — {d.app_tip || d.prompt}
+                              {d.values?.length > 0 && <span className="schema-result-values"> [{d.values.join(", ")}]</span>}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="settings-note">Schema saved to Supabase. Re-run the pipeline to extract these dimensions from all expositions.</p>
+                      </>
+                    ) : (
+                      <p className="settings-note">No new dimensions were identified in this document.</p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -730,7 +879,7 @@ export default function App() {
                 <p className="filter-panel-note">
                   Filters apply to semantic search only. Select one or more values — within a category results match <em>any</em> selected value; across categories all must match. Categories are extracted automatically from exposition content by AI.
                 </p>
-                {FILTER_OPTIONS.map(({ label, key, tip, values }) => (
+                {filterOptions.map(({ label, key, tip, values }) => (
                   <div key={key} className="filter-group">
                     <span className="filter-group-label" title={tip}>{label} <span className="filter-tip-icon" title={tip}>?</span></span>
                     <div className="filter-chips">
@@ -770,7 +919,7 @@ export default function App() {
 
                 {savedCategories.length > 0 && (
                   <div className="filter-group">
-                    <span className="filter-group-label">Saved categories</span>
+                    <span className="filter-group-label">Saved filter presets</span>
                     <div className="filter-chips">
                       {savedCategories.map(cat => (
                         <span key={cat.id} className="saved-cat-row">
@@ -781,12 +930,67 @@ export default function App() {
                           >
                             {cat.name}
                           </button>
-                          <button className="saved-cat-delete" onClick={() => deleteCategory(cat.id)} title="Delete category">×</button>
+                          <button className="saved-cat-delete" onClick={() => deleteCategory(cat.id)} title="Delete">×</button>
                         </span>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* Custom semantic categories */}
+                <div className="filter-group custom-cat-section">
+                  <span className="filter-group-label"
+                    title="Define categories in plain language. The search engine embeds your description and finds semantically similar expositions — even if they use different words.">
+                    Custom semantic categories <span className="filter-tip-icon">?</span>
+                  </span>
+                  {customCats.length > 0 && (
+                    <div className="filter-chips">
+                      {customCats.map(cat => {
+                        const active = activeCustomCatIds.has(cat.id);
+                        return (
+                          <span key={cat.id} className="saved-cat-row">
+                            <button
+                              className={`filter-chip${active ? " filter-chip-active" : ""}`}
+                              onClick={() => toggleCustomCat(cat.id)}
+                              title={cat.description}
+                            >
+                              {cat.name}
+                            </button>
+                            <button className="saved-cat-delete" onClick={() => deleteCustomCat(cat.id)} title="Delete">×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!showCustomCatForm ? (
+                    <button className="custom-cat-add-btn" onClick={() => setShowCustomCatForm(true)}>
+                      + Add custom category
+                    </button>
+                  ) : (
+                    <div className="custom-cat-form">
+                      <input
+                        className="filter-save-input"
+                        value={newCustomCatName}
+                        onChange={e => setNewCustomCatName(e.target.value)}
+                        placeholder="Category name (e.g. Nordic sound art)"
+                      />
+                      <textarea
+                        className="custom-cat-desc"
+                        value={newCustomCatDesc}
+                        onChange={e => setNewCustomCatDesc(e.target.value)}
+                        placeholder="Describe what expositions in this category have in common. Be specific — e.g. 'sound installation and acoustic performance in Scandinavian or Nordic contexts, including works by artists from Norway, Sweden, Denmark, Finland or Iceland.'"
+                        rows={3}
+                      />
+                      <div className="custom-cat-footer">
+                        <span className="custom-cat-note">Each active category adds ~0.5s to search.</span>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button className="filter-clear-inline" onClick={() => { setShowCustomCatForm(false); setNewCustomCatName(""); setNewCustomCatDesc(""); }}>Cancel</button>
+                          <button className="filter-save-btn" onClick={addCustomCat} disabled={!newCustomCatName.trim() || !newCustomCatDesc.trim()}>Save</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
