@@ -4,8 +4,6 @@
   "private": true,
   "homepage": "https://eirikursmari.github.io/react-hee2rtww",
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "openai": "^4.24.0",
     "react": "^18.1.0",
     "react-dom": "^18.1.0",
     "react-markdown": "^10.1.0"
@@ -17,6 +15,9 @@
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
