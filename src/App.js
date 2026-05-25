@@ -301,8 +301,9 @@ export default function App() {
   const [apiKey,      setApiKey]      = useState(() => localStorage.getItem("rc_claude_key")    || "");
   const [semanticUrl, setSemanticUrl] = useState(() => localStorage.getItem("rc_semantic_url")  || "");
   const [showSettings,setShowSettings]= useState(false);
-  const [deepSearch,  setDeepSearch]  = useState(() => localStorage.getItem("rc_deep_search") === "1");
-  const [modelId,     setModelId]     = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
+  const [deepSearch,       setDeepSearch]       = useState(() => localStorage.getItem("rc_deep_search") === "1");
+  const [useSemanticSearch,setUseSemanticSearch] = useState(() => localStorage.getItem("rc_use_semantic") !== "0");
+  const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [showApiKey,  setShowApiKey]  = useState(false);
 
   const [expositions,   setExpositions]   = useState(null);
@@ -388,7 +389,7 @@ export default function App() {
     let semantic = false;
 
     try {
-      if (semanticUrl) {
+      if (semanticUrl && useSemanticSearch) {
         setLoadingMsg("Searching semantic index…");
         results  = await fetchSemanticResults(semanticUrl, q);
         semantic = true;
@@ -445,7 +446,7 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, deepSearch, modelId]);
+  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId]);
 
   const queryExpositions = useCallback(async (e) => {
     e.preventDefault();
@@ -516,7 +517,7 @@ export default function App() {
 
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
-  const usingSemanticIndex = !!semanticUrl;
+  const usingSemanticIndex = !!semanticUrl && useSemanticSearch;
   const numSelected = selectedIds.size;
   const selectionChanged = expoConversation.length > 0 && !setsEqual(selectedIds, expoCtxIds);
 
@@ -556,8 +557,25 @@ export default function App() {
         </form>
 
         <div className="search-options">
-          {usingSemanticIndex ? (
-            <span className="mode-badge mode-semantic">Semantic index active</span>
+          {semanticUrl ? (
+            <div className="mode-toggle-wrap">
+              <button
+                className={`mode-toggle-btn${useSemanticSearch ? " mode-toggle-active" : ""}`}
+                onClick={() => { setUseSemanticSearch(true);  localStorage.setItem("rc_use_semantic", "1"); }}
+              >Semantic</button>
+              <button
+                className={`mode-toggle-btn${!useSemanticSearch ? " mode-toggle-active" : ""}`}
+                onClick={() => { setUseSemanticSearch(false); localStorage.setItem("rc_use_semantic", "0"); }}
+              >Keyword</button>
+              {!useSemanticSearch && (
+                <label className="deep-toggle" style={{ marginLeft: 12 }}>
+                  <input type="checkbox" checked={deepSearch}
+                    onChange={e => { setDeepSearch(e.target.checked); localStorage.setItem("rc_deep_search", e.target.checked ? "1" : ""); }} />
+                  <span className="deep-label">Deep</span>
+                  <span className="deep-hint"> — reads full content (slower)</span>
+                </label>
+              )}
+            </div>
           ) : (
             <label className="deep-toggle">
               <input type="checkbox" checked={deepSearch}
