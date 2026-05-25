@@ -46,13 +46,16 @@ async function fetchKeywordResults(query) {
   return data.expositions ?? data.results ?? [];
 }
 
-async function fetchSemanticResults(rawUrl, query, limit = 10) {
+async function fetchSemanticResults(rawUrl, query, limit = 10, filters = {}) {
   // Strip angle brackets that appear when URLs are copy-pasted from chat/markdown
   const apiUrl = rawUrl.replace(/^[<\s]+|[>\s]+$/g, "");
+  const activeFilters = Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => Array.isArray(v) && v.length > 0)
+  );
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit }),
+    body: JSON.stringify({ query, limit, filters: activeFilters }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -287,6 +290,28 @@ function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }
   );
 }
 
+const FILTER_OPTIONS = [
+  { label: "Research Approach", key: "research_approach", values: [
+    "practice-based", "theoretical", "collaborative", "participatory",
+    "autoethnographic", "speculative", "performative", "experimental",
+    "historical", "comparative",
+  ]},
+  { label: "Artistic Medium", key: "artistic_medium", values: [
+    "performance", "sound", "video", "installation", "painting",
+    "ceramics", "drawing", "photography", "text", "textile",
+    "sculpture", "digital", "architecture",
+  ]},
+  { label: "Methodological Framing", key: "methodological_framing", values: [
+    "phenomenological", "material", "archival", "ethnographic",
+    "process-based", "embodied", "relational", "site-specific",
+  ]},
+  { label: "Impact Type", key: "impact_types", values: [
+    "community engagement", "cultural preservation", "environmental",
+    "social justice", "health and wellbeing", "education",
+    "cross-cultural dialogue", "public space", "policy influence", "economic",
+  ]},
+];
+
 const EXAMPLES = [
   "artistic practice as research",
   "sound art and performance",
@@ -304,6 +329,12 @@ export default function App() {
   const [deepSearch,       setDeepSearch]       = useState(() => localStorage.getItem("rc_deep_search") === "1");
   const [useSemanticSearch,setUseSemanticSearch] = useState(() => localStorage.getItem("rc_use_semantic") !== "0");
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
+  const [filters,          setFilters]           = useState({});
+  const [showFilters,      setShowFilters]       = useState(false);
+  const [savedCategories,  setSavedCategories]   = useState(() => {
+    try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
+  });
+  const [newCatName,       setNewCatName]        = useState("");
   const [showApiKey,  setShowApiKey]  = useState(false);
 
   const [expositions,   setExpositions]   = useState(null);
@@ -361,6 +392,37 @@ export default function App() {
 
   const deselectAll = useCallback(() => setSelectedIds(new Set()), []);
 
+  const toggleFilter = (key, value) => {
+    setFilters(prev => {
+      const cur  = prev[key] || [];
+      const next = cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value];
+      if (next.length === 0) {
+        const { [key]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const clearFilters = () => setFilters({});
+
+  const saveCategory = () => {
+    if (!newCatName.trim() || !hasFilters) return;
+    const cat     = { id: Date.now(), name: newCatName.trim(), filters: { ...filters } };
+    const updated = [...savedCategories, cat];
+    setSavedCategories(updated);
+    localStorage.setItem("rc_categories", JSON.stringify(updated));
+    setNewCatName("");
+  };
+
+  const deleteCategory = (id) => {
+    const updated = savedCategories.filter(c => c.id !== id);
+    setSavedCategories(updated);
+    localStorage.setItem("rc_categories", JSON.stringify(updated));
+  };
+
+  const applyCategory = (cat) => setFilters({ ...cat.filters });
+
   const clearConversation = useCallback(() => {
     setExpoConversation([]);
     setExpoSystemCtx("");
@@ -391,7 +453,7 @@ export default function App() {
     try {
       if (semanticUrl && useSemanticSearch) {
         setLoadingMsg("Searching semantic index…");
-        results  = await fetchSemanticResults(semanticUrl, q);
+        results  = await fetchSemanticResults(semanticUrl, q, 10, filters);
         semantic = true;
       } else {
         results = await fetchKeywordResults(q);
@@ -446,7 +508,7 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId]);
+  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId, filters]);
 
   const queryExpositions = useCallback(async (e) => {
     e.preventDefault();
@@ -517,7 +579,9 @@ export default function App() {
 
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
-  const usingSemanticIndex = !!semanticUrl && useSemanticSearch;
+  const usingSemanticIndex  = !!semanticUrl && useSemanticSearch;
+  const activeFilterCount   = Object.values(filters).flat().length;
+  const hasFilters          = activeFilterCount > 0;
   const numSelected = selectedIds.size;
   const selectionChanged = expoConversation.length > 0 && !setsEqual(selectedIds, expoCtxIds);
 
@@ -612,6 +676,85 @@ export default function App() {
               deployed, paste the Vercel API URL here to enable full-text semantic search.
             </p>
           </div>
+        )}
+
+        {semanticUrl && useSemanticSearch && (
+          <>
+            <div className="filter-bar">
+              <button
+                className={`filter-toggle-btn${showFilters ? " active" : ""}${hasFilters ? " filter-toggle-has" : ""}`}
+                onClick={() => setShowFilters(s => !s)}
+              >
+                {hasFilters ? `Filters (${activeFilterCount})` : "Filters"}
+              </button>
+              {hasFilters && (
+                <button className="filter-clear-inline" onClick={clearFilters}>Clear</button>
+              )}
+              {savedCategories.length > 0 && <span className="filter-bar-sep" />}
+              {savedCategories.map(cat => (
+                <button key={cat.id} className="saved-cat-chip" onClick={() => applyCategory(cat)}>
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+
+            {showFilters && (
+              <div className="filter-panel">
+                {FILTER_OPTIONS.map(({ label, key, values }) => (
+                  <div key={key} className="filter-group">
+                    <span className="filter-group-label">{label}</span>
+                    <div className="filter-chips">
+                      {values.map(val => {
+                        const active = (filters[key] || []).includes(val);
+                        return (
+                          <button
+                            key={val}
+                            className={`filter-chip${active ? " filter-chip-active" : ""}`}
+                            onClick={() => toggleFilter(key, val)}
+                          >
+                            {val}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                <div className="filter-save-row">
+                  <input
+                    className="filter-save-input"
+                    value={newCatName}
+                    onChange={e => setNewCatName(e.target.value)}
+                    placeholder="Name this filter set…"
+                    onKeyDown={e => e.key === "Enter" && saveCategory()}
+                  />
+                  <button
+                    className="filter-save-btn"
+                    onClick={saveCategory}
+                    disabled={!newCatName.trim() || !hasFilters}
+                  >
+                    Save as category
+                  </button>
+                </div>
+
+                {savedCategories.length > 0 && (
+                  <div className="filter-group">
+                    <span className="filter-group-label">Saved categories</span>
+                    <div className="filter-chips">
+                      {savedCategories.map(cat => (
+                        <span key={cat.id} className="saved-cat-row">
+                          <button className="filter-chip" onClick={() => applyCategory(cat)}>
+                            {cat.name}
+                          </button>
+                          <button className="saved-cat-delete" onClick={() => deleteCategory(cat.id)}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         {searchError && <div className="search-error">{searchError}</div>}
