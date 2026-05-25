@@ -486,6 +486,107 @@ a:hover {
   cursor: default;
 }
 
+/* ── Custom semantic categories ── */
+
+.custom-cat-section {
+  border-top: 1px solid #e8e8e8;
+  padding-top: 12px;
+}
+
+.custom-cat-add-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px dashed #aaa;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.custom-cat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.custom-cat-desc {
+  font-size: 13px;
+  padding: 7px 9px;
+  border: 1px solid #ccc;
+  background: #fff;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  outline: none;
+}
+
+.custom-cat-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.custom-cat-note {
+  font-size: 11px;
+  color: #999;
+}
+
+/* ── Schema upload ── */
+
+.schema-upload-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.schema-file-btn {
+  flex: 1;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #444;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schema-result {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid #d0e8d0;
+  background: #f5fdf5;
+}
+
+.schema-result-summary {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+.schema-result-label {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.schema-result-list {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.schema-result-values {
+  color: #666;
+  font-style: italic;
+}
+
 /* ── Semantic match excerpt ── */
 
 .exp-matched {

@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "description": "Extraction schema for RC research metadata. To add new dimensions, edit 'custom_dimensions' and re-run: python3 pipeline.py --extract-only --force",
+
+  "system_prompt": "You are a research analyst specialising in artistic research. Extract structured metadata from exposition texts for the Research Catalogue (researchcatalogue.net).\n\nReturn ONLY a valid JSON object — no prose, no markdown fences. Use null for fields where the information is not present. Be conservative: only include what is explicitly stated or clearly demonstrated in the text.\n\nFor societal impact, carefully distinguish:\n- \"potential\" impact: what the artist intends or hopes to achieve beyond the artistic/research context.\n- \"actual\" impact: outcomes that are documented as having already occurred — partnerships formed, communities affected, events held, policy changes noted.",
+
+  "array_dimensions": [
+    {
+      "key": "research_approach",
+      "label": "Research Approach",
+      "app_filter": true,
+      "app_tip": "How the artist approaches the research process. 'Practice-based' means the art-making itself is the research method.",
+      "prompt": "Array. Choose from: practice-based, theoretical, collaborative, participatory, autoethnographic, speculative, performative, experimental, historical, comparative. Add others if clearly applicable.",
+      "values": ["practice-based", "theoretical", "collaborative", "participatory", "autoethnographic", "speculative", "performative", "experimental", "historical", "comparative"]
+    },
+    {
+      "key": "artistic_medium",
+      "label": "Artistic Medium",
+      "app_filter": true,
+      "app_tip": "The primary material, form, or medium of the work.",
+      "prompt": "Array. E.g.: performance, sound, video, installation, painting, ceramics, drawing, photography, text, textile, sculpture, digital, architecture. Add others if clearly applicable.",
+      "values": ["performance", "sound", "video", "installation", "painting", "ceramics", "drawing", "photography", "text", "textile", "sculpture", "digital", "architecture"]
+    },
+    {
+      "key": "methodological_framing",
+      "label": "Methodological Framing",
+      "app_filter": true,
+      "app_tip": "The theoretical or philosophical lens through which the research is framed.",
+      "prompt": "Array. E.g.: phenomenological, material, archival, ethnographic, process-based, embodied, relational, site-specific.",
+      "values": ["phenomenological", "material", "archival", "ethnographic", "process-based", "embodied", "relational", "site-specific"]
+    },
+    {
+      "key": "geographic_context",
+      "label": "Geographic Context",
+      "app_filter": false,
+      "app_tip": "Countries, regions, or named cultural contexts explicitly referenced.",
+      "prompt": "Array of countries, regions, or named cultural contexts explicitly referenced. Empty array if none mentioned.",
+      "values": []
+    },
+    {
+      "key": "impact_types",
+      "label": "Impact Type",
+      "app_filter": true,
+      "app_tip": "Documented or intended societal impact beyond the immediate research context.",
+      "prompt": "Array. Choose from: community engagement, cultural preservation, environmental, social justice, health and wellbeing, education, cross-cultural dialogue, public space, policy influence, economic. Empty array if no societal impact dimension is present.",
+      "values": ["community engagement", "cultural preservation", "environmental", "social justice", "health and wellbeing", "education", "cross-cultural dialogue", "public space", "policy influence", "economic"]
+    }
+  ],
+
+  "text_dimensions": [
+    { "key": "research_question",     "prompt": "String. The central research question, stated or clearly implied." },
+    { "key": "methods_described",     "prompt": "String. Brief summary of the methods or working processes used." },
+    { "key": "key_findings",          "prompt": "String. Key findings, contributions, or outcomes of the research." },
+    { "key": "materials_tools",       "prompt": "String. Notable materials, tools, or technologies used." },
+    { "key": "theoretical_refs",      "prompt": "String. Key theorists, artists, or works explicitly referenced." },
+    { "key": "impact_scope",          "prompt": "String. One of: local, regional, national, global. null if no societal impact is present." },
+    { "key": "impact_evidence_level", "prompt": "String. One of: stated_intent, demonstrated, externally_validated. Use the highest level that applies. null if no impact present." }
+  ],
+
+  "nested_dimensions": {
+    "impact_potential": {
+      "prompt": "Potential societal impact — what the artist intends or hopes to achieve",
+      "fields": {
+        "beneficiaries": "intended communities or groups",
+        "goals":         "stated societal goals beyond the research context",
+        "applications":  "proposed future uses or applications"
+      }
+    },
+    "impact_actual": {
+      "prompt": "Actual documented societal impact — outcomes that have occurred",
+      "fields": {
+        "outcomes":          "documented outcomes or effects that have occurred",
+        "communities":       "communities or institutions actually reached",
+        "partnerships":      "collaborations or partnerships formed",
+        "policy_changes":    "changes to practice, policy, or public space",
+        "public_engagement": "public events, exhibitions, or activities documented"
+      }
+    }
+  },
+
+  "custom_dimensions": []
+}

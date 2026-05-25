@@ -11,25 +11,7 @@ const CORS = {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS });
-  }
-  if (req.method === "GET") {
-    return Response.json({ status: "RC Semantic Search — POST {query, limit, filters}" }, { headers: CORS });
-  }
-  if (req.method !== "POST") {
-    return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
-  }
-
-  let query, limit, filters;
-  try {
-    ({ query, limit = 10, filters = {} } = await req.json());
-  } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
-  }
-  if (!query?.trim()) {
-    return Response.json({ error: "query is required" }, { status: 400, headers: CORS });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -39,18 +21,50 @@ Deno.serve(async (req) => {
     "Authorization": "Bearer " + SUPABASE_KEY,
   };
 
+  if (req.method === "GET") {
+    // Return live filter config from pipeline_config so the app can display
+    // dynamically-generated filter dimensions without redeployment.
+    try {
+      const r = await fetch(
+        SUPABASE_URL + "/rest/v1/pipeline_config?select=value&key=eq.filter_config",
+        { headers: sbHeaders }
+      );
+      const rows = r.ok ? await r.json() : [];
+      return Response.json(
+        { status: "RC Semantic Search — POST {query, limit, filters, customCategories}", filterConfig: rows[0]?.value ?? null },
+        { headers: CORS }
+      );
+    } catch {
+      return Response.json({ status: "RC Semantic Search" }, { headers: CORS });
+    }
+  }
+
+  if (req.method !== "POST") {
+    return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
+  }
+
+  let query: string, limit: number, filters: Record<string, string[]>,
+      customCategories: { description: string }[];
+  try {
+    ({ query, limit = 10, filters = {}, customCategories = [] } = await req.json());
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
+  }
+  if (!query?.trim()) {
+    return Response.json({ error: "query is required" }, { status: 400, headers: CORS });
+  }
+
   const hasFilters = Object.values(filters).some(
-    (arr) => Array.isArray(arr) && (arr as string[]).length > 0
+    (arr) => Array.isArray(arr) && arr.length > 0
   );
+  const activeCustomCats = customCategories.filter((c) => c.description?.trim());
+  const hasCustomCats    = activeCustomCats.length > 0;
 
   try {
-    // 1. Embed via OpenAI
+    // 1. Embed query via OpenAI
     const embRes = await fetch("https://api.openai.com/v1/embeddings", {
       method:  "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": "Bearer " + Deno.env.get("OPENAI_API_KEY"),
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + Deno.env.get("OPENAI_API_KEY") },
       body: JSON.stringify({ model: "text-embedding-3-small", input: query.trim() }),
     });
     if (!embRes.ok) {
@@ -59,18 +73,14 @@ Deno.serve(async (req) => {
     }
     const embedding = (await embRes.json()).data[0].embedding;
 
-    // 2. Supabase vector search — fetch more candidates when filtering
-    const matchCount = hasFilters ? limit * 20 : limit * 4;
+    // 2. Vector search — fetch more candidates when filtering
+    const matchCount = (hasFilters || hasCustomCats) ? limit * 20 : limit * 4;
     const sbRes = await fetch(
       SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks",
       {
         method:  "POST",
         headers: sbHeaders,
-        body: JSON.stringify({
-          query_embedding: embedding,
-          match_count:     matchCount,
-          match_threshold: 0.1,
-        }),
+        body: JSON.stringify({ query_embedding: embedding, match_count: matchCount, match_threshold: 0.1 }),
       }
     );
     if (!sbRes.ok) {
@@ -80,34 +90,62 @@ Deno.serve(async (req) => {
     const rows = await sbRes.json();
 
     // 3. Deduplicate — best chunk per exposition
-    const best = new Map();
+    const best = new Map<number, any>();
     for (const row of rows ?? []) {
       const prev = best.get(row.exposition_id);
       if (!prev || row.similarity > prev.similarity) best.set(row.exposition_id, row);
     }
 
-    // 4. Apply category filters if present
+    // 4. Apply standard metadata filters (OR within category, AND between categories)
     if (hasFilters && best.size > 0) {
-      const ids = [...best.keys()].join(",");
-      const metaRes = await fetch(
-        SUPABASE_URL +
-          "/rest/v1/expositions?select=id,research_approach,artistic_medium," +
-          "methodological_framing,impact_types,geographic_context&id=in.(" + ids + ")",
+      const ids      = [...best.keys()].join(",");
+      const metaRes  = await fetch(
+        SUPABASE_URL + "/rest/v1/expositions?select=id,research_approach,artistic_medium," +
+          "methodological_framing,impact_types,geographic_context,custom_metadata&id=in.(" + ids + ")",
         { headers: sbHeaders }
       );
       if (metaRes.ok) {
         const metaRows = await metaRes.json();
-        const metaMap = new Map(metaRows.map((m: Record<string, unknown>) => [m.id, m]));
+        const metaMap  = new Map(metaRows.map((m: any) => [m.id, m]));
         for (const expoId of [...best.keys()]) {
           const m = (metaMap.get(expoId) ?? {}) as Record<string, string[]>;
           for (const [key, selected] of Object.entries(filters)) {
             if (!Array.isArray(selected) || selected.length === 0) continue;
-            const expoVals: string[] = m[key] ?? [];
-            if (!selected.some((v: string) => expoVals.includes(v))) {
+            // Check standard columns and custom_metadata
+            const expoVals: string[] = m[key] ?? (m.custom_metadata as any)?.[key] ?? [];
+            if (!selected.some((v) => expoVals.includes(v))) {
               best.delete(expoId);
               break;
             }
           }
+        }
+      }
+    }
+
+    // 5. Apply custom semantic categories (each adds one embedding + vector search)
+    if (hasCustomCats && best.size > 0) {
+      for (const cat of activeCustomCats) {
+        const catEmbRes = await fetch("https://api.openai.com/v1/embeddings", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + Deno.env.get("OPENAI_API_KEY") },
+          body: JSON.stringify({ model: "text-embedding-3-small", input: cat.description.trim() }),
+        });
+        if (!catEmbRes.ok) continue;
+        const catEmb = (await catEmbRes.json()).data[0].embedding;
+
+        const catRes = await fetch(
+          SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks",
+          {
+            method:  "POST",
+            headers: sbHeaders,
+            body: JSON.stringify({ query_embedding: catEmb, match_count: 500, match_threshold: 0.15 }),
+          }
+        );
+        if (!catRes.ok) continue;
+        const catIds = new Set((await catRes.json()).map((r: any) => r.exposition_id));
+
+        for (const expoId of [...best.keys()]) {
+          if (!catIds.has(expoId)) best.delete(expoId);
         }
       }
     }
