@@ -25,6 +25,7 @@ export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
 
   if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method === "GET") return res.json({ status: "RC Semantic Search API — POST {query, limit} to search" });
   if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
 
   const { query, limit = 10 } = req.body ?? {};
