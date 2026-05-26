@@ -601,7 +601,7 @@ export default function App() {
         results  = await fetchSemanticResults(semanticUrl, q, resultLimit, filters, activeCats);
         semantic = true;
       } else {
-        results = (await fetchKeywordResults(q)).slice(0, resultLimit);
+        results = (await fetchKeywordResults(q)).filter(e => e.title?.trim()).slice(0, resultLimit);
       }
       if (results.length > 0) console.log("First result:", results[0]);
       setExpositions(results);
