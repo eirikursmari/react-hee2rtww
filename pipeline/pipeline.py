@@ -464,7 +464,8 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
     log.info("  Stored %d chunk(s) across %d page(s)", total_chunks, len(pages))
 
 
-def extract_only_exposition(sb: Client, expo: dict, anthropic_client):
+def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
+                            schema: Optional[dict] = None):
     """Run extraction on an already-indexed exposition without re-embedding."""
     expo_id = expo["id"]
     title   = expo.get("title", "Untitled")[:70]
@@ -480,7 +481,7 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client):
 
     metadata = extract_metadata(
         anthropic_client, title,
-        author_name(expo.get("author")), abstract, body,
+        author_name(expo.get("author")), abstract, body, schema,
     )
     if not metadata:
         return
@@ -507,6 +508,19 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client):
         "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
         "extracted_at":           datetime.now(timezone.utc).isoformat(),
     }
+
+    # Custom dimensions → custom_metadata JSONB
+    if schema:
+        custom = {}
+        for dim in schema.get("custom_dimensions", []):
+            key = dim["key"]
+            val = metadata.get(key)
+            if val is None:
+                continue
+            custom[key] = _clean_array(val) if dim.get("type") == "array" else _clean_str(val)
+        if custom:
+            update["custom_metadata"] = custom
+
     sb.table("expositions").update(update).eq("id", expo_id).execute()
     time.sleep(CLAUDE_DELAY)
 
