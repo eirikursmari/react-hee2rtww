@@ -832,6 +832,38 @@ a:hover {
   flex-shrink: 0;
 }
 
+.results-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.results-limit-label {
+  font-size: 11px;
+  color: #888;
+  margin-right: 2px;
+}
+
+.limit-btn {
+  font-family: Georgia, serif;
+  font-size: 11px;
+  background: none;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 2px;
+  color: #555;
+}
+
+.limit-btn:hover { border-color: #000; color: #000; }
+
+.limit-btn-active {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+
 .select-controls {
   display: flex;
   align-items: center;

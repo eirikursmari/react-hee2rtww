@@ -768,18 +768,6 @@ export default function App() {
         <div className="search-options">
           {semanticUrl ? (
             <div className="mode-row">
-              <span className="mode-row-label">Results</span>
-              <div className="mode-toggle-wrap">
-                {[10, 25, 50].map(n => (
-                  <button key={n}
-                    className={`mode-toggle-btn${resultLimit === n ? " mode-toggle-active" : ""}`}
-                    onClick={() => { setResultLimit(n); localStorage.setItem("rc_result_limit", n); }}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="mode-row">
               <span className="mode-row-label">Search mode</span>
               <div className="mode-toggle-wrap">
                 <button
@@ -1064,6 +1052,16 @@ export default function App() {
                   ? "No results found"
                   : `${expositions.length} exposition${expositions.length !== 1 ? "s" : ""} retrieved`}
               </h2>
+              <div className="results-limit-row">
+                <span className="results-limit-label">Show</span>
+                {[10, 25, 50].map(n => (
+                  <button key={n}
+                    className={`limit-btn${resultLimit === n ? " limit-btn-active" : ""}`}
+                    onClick={() => { setResultLimit(n); localStorage.setItem("rc_result_limit", n); }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
               {expositions.length > 0 && (
                 <div className="select-controls">
                   <button className="select-btn" onClick={selectAll}
