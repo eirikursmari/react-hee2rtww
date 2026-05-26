@@ -276,11 +276,26 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
   );
 }
 
-function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error }) {
+function downloadMarkdown(filename, content) {
+  const blob = new Blob([content], { type: "text/markdown" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function AnswerPanel({ label = "AI Answer", answer, loading, loadingMsg, error, onDownload }) {
   if (!loading && !loadingMsg && !error && !answer) return null;
   return (
     <section className="answer-section">
-      <h2 className="section-label">{label}</h2>
+      <div className="answer-header">
+        <h2 className="section-label">{label}</h2>
+        {answer && onDownload && (
+          <button className="download-btn" onClick={onDownload} title="Download as Markdown file">
+            ↓ Download
+          </button>
+        )}
+      </div>
       {loadingMsg && <p className="answer-loading">{loadingMsg}</p>}
       {loading && !loadingMsg && <p className="answer-loading">Generating answer…</p>}
       {error && <p className="answer-error">{error}</p>}
@@ -388,6 +403,32 @@ export default function App() {
       conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [expoConversation]);
+
+  function downloadAnswer() {
+    const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
+    const sources = (expositions || []).slice(0, 10)
+      .map((e, i) => `${i + 1}. **${e.title}** — ${e.author}  \n   ${e.url}`)
+      .join("\n");
+    const slug = query.slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    downloadMarkdown(`rc-answer-${slug}.md`,
+      `# Research Catalogue — AI Answer\n\n**Query:** ${query}  \n**Date:** ${date}\n\n---\n\n${answer}\n\n---\n\n## Sources\n\n${sources}\n`
+    );
+  }
+
+  function downloadConversation() {
+    const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
+    const selected = (expositions || []).filter(e => selectedIds.has(e.id));
+    const expoList = selected
+      .map((e, i) => `${i + 1}. **${e.title}** — ${e.author}  \n   ${e.url}`)
+      .join("\n");
+    const thread = expoConversation
+      .map(({ q, a }) => `**Q:** ${q}\n\n${a}`)
+      .join("\n\n---\n\n");
+    const slug = query.slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    downloadMarkdown(`rc-analysis-${slug}.md`,
+      `# Research Catalogue — Exposition Analysis\n\n**Date:** ${date}  \n**Search query:** ${query}\n\n---\n\n## Expositions analysed\n\n${expoList}\n\n---\n\n## Analysis\n\n${thread}\n`
+    );
+  }
 
   // Fetch live filter config from the edge function so new schema dimensions
   // appear without redeploying the app.
@@ -999,7 +1040,8 @@ export default function App() {
         {searchError && <div className="search-error">{searchError}</div>}
 
         <AnswerPanel answer={answer} loading={answerLoading}
-          loadingMsg={loadingMsg} error={answerError} />
+          loadingMsg={loadingMsg} error={answerError}
+          onDownload={answer ? downloadAnswer : null} />
 
         {expositions !== null && !searchLoading && (
           <section className="results-section">
@@ -1044,10 +1086,16 @@ export default function App() {
                     )}
                   </h3>
                   {expoConversation.length > 0 && (
-                    <button className="expo-clear-btn" onClick={clearConversation}
-                      title="Clear conversation and start fresh">
-                      Clear conversation
-                    </button>
+                    <div className="expo-header-actions">
+                      <button className="download-btn" onClick={downloadConversation}
+                        title="Download analysis as a Markdown file">
+                        ↓ Download
+                      </button>
+                      <button className="expo-clear-btn" onClick={clearConversation}
+                        title="Clear conversation and start fresh">
+                        Clear conversation
+                      </button>
+                    </div>
                   )}
                 </div>
 

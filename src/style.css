@@ -702,6 +702,48 @@ a:hover {
   margin-bottom: 30px;
 }
 
+.answer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.answer-header .section-label {
+  margin-bottom: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.answer-header + * {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.download-btn {
+  font-family: Georgia, serif;
+  font-size: 11px;
+  color: #555;
+  background: none;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.download-btn:hover {
+  border-color: #000;
+  color: #000;
+}
+
+.expo-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .section-label {
   font-size: 11px;
   font-weight: 700;
