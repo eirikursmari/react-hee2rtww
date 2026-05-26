@@ -363,6 +363,11 @@ def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None,
         "indexed_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # Published-in portals/journals from RC API (not from Claude extraction)
+    row["published_in"] = [
+        p.get("name", "") for p in expo.get("published_in", []) if p.get("name")
+    ]
+
     if metadata:
         for k in STANDARD_ARRAY_KEYS:
             row[k] = _clean_array(metadata.get(k))
@@ -507,6 +512,7 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
         "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
         "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
         "extracted_at":           datetime.now(timezone.utc).isoformat(),
+        "published_in":           [p.get("name", "") for p in expo.get("published_in", []) if p.get("name")],
     }
 
     # Custom dimensions → custom_metadata JSONB
@@ -525,6 +531,30 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
     time.sleep(CLAUDE_DELAY)
 
 # ── Pipeline entry points ─────────────────────────────────────────────────────
+
+def run_portals_only(limit: Optional[int] = None):
+    """Fast pass: update only the published_in column from the RC master list. No Claude calls."""
+    _, sb, _ = get_clients()
+    expositions = fetch_internal_research()
+    log.info("Updating published_in for %d expositions", len(expositions))
+    if limit:
+        expositions = expositions[:limit]
+    done = skipped = 0
+    for i, expo in enumerate(expositions, 1):
+        expo_id = expo.get("id")
+        if not expo_id:
+            continue
+        portals = [p.get("name", "") for p in expo.get("published_in", []) if p.get("name")]
+        try:
+            sb.table("expositions").update({"published_in": portals}).eq("id", expo_id).execute()
+            done += 1
+        except Exception as e:
+            log.warning("[%d/%d] Failed %d: %s", i, len(expositions), expo_id, e)
+            skipped += 1
+        if i % 100 == 0:
+            log.info("  %d / %d updated", i, len(expositions))
+    log.info("Done — updated: %d  failed: %d", done, skipped)
+
 
 def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None):
     openai, sb, anthropic_client = get_clients()
@@ -597,5 +627,10 @@ if __name__ == "__main__":
                          "targets expositions with no extracted_at timestamp")
     ap.add_argument("--limit", type=int, metavar="N",
                     help="Process only the first N expositions (for testing)")
+    ap.add_argument("--portals-only", action="store_true",
+                    help="Fast pass: update only published_in from RC API, no Claude calls")
     args = ap.parse_args()
-    run(force=args.force, extract_only=args.extract_only, limit=args.limit)
+    if args.portals_only:
+        run_portals_only(limit=args.limit)
+    else:
+        run(force=args.force, extract_only=args.extract_only, limit=args.limit)

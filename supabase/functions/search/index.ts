@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
       const ids      = [...best.keys()].join(",");
       const metaRes  = await fetch(
         SUPABASE_URL + "/rest/v1/expositions?select=id,research_approach,artistic_medium," +
-          "methodological_framing,impact_types,geographic_context,custom_metadata&id=in.(" + ids + ")",
+          "methodological_framing,impact_types,geographic_context,published_in,custom_metadata&id=in.(" + ids + ")",
         { headers: sbHeaders }
       );
       if (metaRes.ok) {
