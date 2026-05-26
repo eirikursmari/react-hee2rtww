@@ -350,6 +350,7 @@ export default function App() {
   const [showSettings,setShowSettings]= useState(false);
   const [deepSearch,       setDeepSearch]       = useState(() => localStorage.getItem("rc_deep_search") === "1");
   const [useSemanticSearch,setUseSemanticSearch] = useState(() => localStorage.getItem("rc_use_semantic") !== "0");
+  const [resultLimit,      setResultLimit]       = useState(() => Number(localStorage.getItem("rc_result_limit")) || 10);
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [filters,          setFilters]           = useState({});
   const [showFilters,      setShowFilters]       = useState(false);
@@ -597,10 +598,10 @@ export default function App() {
         const activeCats = customCats
           .filter(c => activeCustomCatIds.has(c.id))
           .map(c => ({ description: c.description }));
-        results  = await fetchSemanticResults(semanticUrl, q, 10, filters, activeCats);
+        results  = await fetchSemanticResults(semanticUrl, q, resultLimit, filters, activeCats);
         semantic = true;
       } else {
-        results = await fetchKeywordResults(q);
+        results = (await fetchKeywordResults(q)).slice(0, resultLimit);
       }
       if (results.length > 0) console.log("First result:", results[0]);
       setExpositions(results);
@@ -652,7 +653,7 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, modelId, filters, customCats, activeCustomCatIds]);
+  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, resultLimit, modelId, filters, customCats, activeCustomCatIds]);
 
   const queryExpositions = useCallback(async (e) => {
     e.preventDefault();
@@ -766,6 +767,18 @@ export default function App() {
 
         <div className="search-options">
           {semanticUrl ? (
+            <div className="mode-row">
+              <span className="mode-row-label">Results</span>
+              <div className="mode-toggle-wrap">
+                {[10, 25, 50].map(n => (
+                  <button key={n}
+                    className={`mode-toggle-btn${resultLimit === n ? " mode-toggle-active" : ""}`}
+                    onClick={() => { setResultLimit(n); localStorage.setItem("rc_result_limit", n); }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="mode-row">
               <span className="mode-row-label">Search mode</span>
               <div className="mode-toggle-wrap">
