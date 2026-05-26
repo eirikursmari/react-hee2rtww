@@ -332,6 +332,9 @@ const FILTER_OPTIONS = [
       "social justice", "health and wellbeing", "education",
       "cross-cultural dialogue", "public space", "policy influence", "economic",
     ]},
+  { label: "Published In", key: "published_in",
+    tip: "The RC portal or journal where the exposition was published, e.g. Journal for Artistic Research.",
+    values: []},
 ];
 
 const EXAMPLES = [
@@ -921,7 +924,7 @@ export default function App() {
                 <p className="filter-panel-note">
                   Filters apply to semantic search only. Select one or more values — within a category results match <em>any</em> selected value; across categories all must match. Categories are extracted automatically from exposition content by AI.
                 </p>
-                {filterOptions.map(({ label, key, tip, values }) => (
+                {filterOptions.filter(f => f.values.length > 0).map(({ label, key, tip, values }) => (
                   <div key={key} className="filter-group">
                     <span className="filter-group-label" title={tip}>{label} <span className="filter-tip-icon" title={tip}>?</span></span>
                     <div className="filter-chips">
