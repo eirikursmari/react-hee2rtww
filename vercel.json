@@ -1,0 +1,19 @@
+{
+  "ignoreCommand": "echo 'Deployment disabled: app runs on GitHub Pages + Supabase'",
+  "functions": {
+    "api/search.js": {
+      "maxDuration": 30
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
+        { "key": "Access-Control-Max-Age",       "value": "86400" }
+      ]
+    }
+  ]
+}
