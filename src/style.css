@@ -1204,6 +1204,158 @@ a:hover {
   color: #555;
 }
 
+/* ── Classifier settings ── */
+
+.settings-section-divider {
+  height: 1px;
+  background: #e8e8e8;
+  margin: 20px 0 0;
+}
+
+.classifier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.classifier-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.classifier-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.classifier-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.classifier-item-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.classifier-item-key {
+  font-size: 11px;
+  font-family: monospace;
+  color: #777;
+  background: #f0f0f0;
+  padding: 1px 5px;
+}
+
+.classifier-item-url {
+  font-size: 11px;
+  color: #999;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classifier-delete-btn {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #aaa;
+  cursor: pointer;
+}
+
+.classifier-delete-btn:hover {
+  border-color: #e00;
+  color: #e00;
+}
+
+.classifier-form {
+  margin-top: 10px;
+  border: 1px solid #e0e0e0;
+  padding: 12px 14px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clf-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.clf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.clf-field-grow { flex: 1; }
+
+.clf-field-narrow {
+  flex-shrink: 0;
+  width: 120px;
+}
+
+.clf-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #888;
+  white-space: nowrap;
+}
+
+.clf-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+
+.clf-mono {
+  font-family: monospace !important;
+  font-size: 12px !important;
+}
+
+.clf-select {
+  font-family: Georgia, serif;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  background: #fff;
+  outline: none;
+  width: 100%;
+}
+
+.clf-checkboxes {
+  display: flex;
+  gap: 14px;
+  padding: 6px 0;
+}
+
+.clf-check-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* ── Corpus Analytics ── */
 
 .analytics-bar {

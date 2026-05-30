@@ -576,6 +576,197 @@ def run_language_only(limit: Optional[int] = None):
     log.info("Done — updated: %d  failed: %d", done, failed)
 
 
+def fetch_all_expositions_from_db(sb: Client, fields: str) -> list[dict]:
+    """Paginate through all exposition rows in Supabase."""
+    PAGE, offset, all_rows = 1000, 0, []
+    while True:
+        r = sb.table("expositions").select(fields).range(offset, offset + PAGE - 1).execute()
+        if not r.data:
+            break
+        all_rows.extend(r.data)
+        if len(r.data) < PAGE:
+            break
+        offset += PAGE
+    return all_rows
+
+
+def get_nested_path(data, path: str):
+    """Follow a dot-separated path into a nested dict/list."""
+    if not path:
+        return data
+    current = data
+    for key in path.split("."):
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            return None
+    return current
+
+
+def extract_classifier_labels(response_json: dict, clf: dict) -> list[str]:
+    """Parse a classifier API response into a flat list of label strings."""
+    resp = clf.get("response", {})
+    array_path  = resp.get("array_path", "")
+    label_field = resp.get("label_field", "")
+    score_field = resp.get("score_field", "")
+    try:
+        threshold = float(resp.get("threshold", 0.5))
+    except (TypeError, ValueError):
+        threshold = 0.5
+
+    items = get_nested_path(response_json, array_path) if array_path else response_json
+    if not isinstance(items, list):
+        return []
+
+    labels = []
+    for item in items:
+        if isinstance(item, str):
+            labels.append(item)
+        elif isinstance(item, dict):
+            if score_field:
+                try:
+                    score = float(item.get(score_field, 0))
+                except (TypeError, ValueError):
+                    continue
+                if score < threshold:
+                    continue
+            if label_field:
+                lbl = item.get(label_field)
+                if lbl:
+                    labels.append(str(lbl))
+    return labels
+
+
+def update_classifier_filter_config(sb: Client, clf: dict, rows: list[dict]):
+    """Add or refresh the classifier's filter dimension in pipeline_config.filter_config."""
+    storage_key = clf["storage_key"]
+
+    all_labels: set[str] = set()
+    for row in rows:
+        meta = row.get("custom_metadata") or {}
+        for lbl in (meta.get(storage_key) or []):
+            if lbl:
+                all_labels.add(str(lbl))
+
+    if not all_labels:
+        return
+
+    try:
+        r = sb.table("pipeline_config").select("value").eq("key", "filter_config").execute()
+        filter_config = list(r.data[0]["value"]) if r.data else []
+    except Exception:
+        filter_config = []
+
+    filter_config = [f for f in filter_config if f.get("key") != storage_key]
+    filter_config.append({
+        "key":    storage_key,
+        "label":  clf["name"],
+        "tip":    clf.get("tip", ""),
+        "values": sorted(all_labels),
+    })
+
+    sb.table("pipeline_config").upsert({
+        "key":        "filter_config",
+        "value":      filter_config,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+    log.info("  filter_config updated — %d distinct labels for '%s'", len(all_labels), clf["name"])
+
+
+def run_classifiers(force: bool = False, limit: Optional[int] = None):
+    """Call all enabled external classifiers and store labels in custom_metadata."""
+    _, sb, _ = get_clients()
+
+    try:
+        r = sb.table("pipeline_config").select("value").eq("key", "classifier_config").execute()
+        configs = r.data[0]["value"] if r.data else []
+    except Exception as e:
+        log.error("Could not load classifier_config from Supabase: %s", e)
+        sys.exit(1)
+
+    enabled = [c for c in (configs or []) if c.get("enabled", True)]
+    if not enabled:
+        log.info("No enabled classifiers in pipeline_config.classifier_config")
+        return
+
+    log.info("Found %d enabled classifier(s)", len(enabled))
+
+    rows = fetch_all_expositions_from_db(sb, "id,title,keywords,abstract,custom_metadata")
+    log.info("Loaded %d expositions from Supabase", len(rows))
+    if limit:
+        rows = rows[:limit]
+
+    for clf in enabled:
+        name        = clf["name"]
+        storage_key = clf["storage_key"]
+        endpoint    = clf["endpoint"]
+        method      = clf.get("method", "POST").upper()
+        inp         = clf.get("input", {})
+        input_field = inp.get("field", "text")
+        text_fields = inp.get("text_fields", ["title", "keywords", "abstract"])
+        try:
+            rate_limit = float(clf.get("rate_limit", 5))
+        except (TypeError, ValueError):
+            rate_limit = 5.0
+        delay = 1.0 / max(rate_limit, 0.1)
+        hdrs  = {"Content-Type": "application/json", **clf.get("headers", {})}
+
+        log.info("\nClassifier: %s  [storage_key=%s]", name, storage_key)
+        done = skipped = failed = 0
+
+        for i, expo in enumerate(rows, 1):
+            meta = dict(expo.get("custom_metadata") or {})
+            if not force and meta.get(storage_key) is not None:
+                skipped += 1
+                continue
+
+            parts = []
+            if "title"    in text_fields and expo.get("title"):
+                parts.append(expo["title"])
+            if "keywords" in text_fields and expo.get("keywords"):
+                kw = expo["keywords"]
+                parts.append(", ".join(str(k) for k in kw if k) if isinstance(kw, list) else str(kw))
+            if "abstract" in text_fields and expo.get("abstract"):
+                parts.append(expo["abstract"])
+
+            text = " ".join(parts).strip()
+            if not text:
+                skipped += 1
+                continue
+
+            try:
+                if method == "GET":
+                    resp = requests.get(endpoint, params={input_field: text},
+                                        headers=hdrs, timeout=30)
+                else:
+                    resp = requests.post(endpoint, json={input_field: text},
+                                         headers=hdrs, timeout=30)
+                resp.raise_for_status()
+                response_json = resp.json()
+            except Exception as e:
+                log.warning("[%d/%d] API error for expo %d: %s", i, len(rows), expo["id"], e)
+                failed += 1
+                time.sleep(delay)
+                continue
+
+            labels = extract_classifier_labels(response_json, clf)
+            meta[storage_key] = labels
+            sb.table("expositions").update({"custom_metadata": meta}).eq("id", expo["id"]).execute()
+            done += 1
+
+            if done % 100 == 0:
+                log.info("  %d classified…", done)
+
+            time.sleep(delay)
+
+        log.info("  %s — done: %d  skipped: %d  failed: %d", name, done, skipped, failed)
+
+        # Reload rows with fresh custom_metadata for filter_config update
+        if done > 0 or force:
+            fresh = fetch_all_expositions_from_db(sb, "id,custom_metadata")
+            update_classifier_filter_config(sb, clf, fresh)
+
+
 def run_portals_only(limit: Optional[int] = None):
     """Fast pass: update only the published_in column from the RC master list. No Claude calls."""
     _, sb, _ = get_clients()
@@ -675,10 +866,14 @@ if __name__ == "__main__":
                     help="Fast pass: update only published_in from RC API, no Claude calls")
     ap.add_argument("--language-only", action="store_true",
                     help="Fast pass: detect and store language for all expositions, no Claude calls")
+    ap.add_argument("--classify-only", action="store_true",
+                    help="Run all enabled external classifiers (reads config from Supabase pipeline_config)")
     args = ap.parse_args()
     if args.portals_only:
         run_portals_only(limit=args.limit)
     elif args.language_only:
         run_language_only(limit=args.limit)
+    elif args.classify_only:
+        run_classifiers(force=args.force, limit=args.limit)
     else:
         run(force=args.force, extract_only=args.extract_only, limit=args.limit)

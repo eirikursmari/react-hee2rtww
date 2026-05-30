@@ -90,12 +90,35 @@ Deno.serve(async (req) => {
     return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
   }
 
-  let document: { type: string; content: string }, filename: string;
-  try {
-    ({ document, filename = "document" } = await req.json());
-  } catch {
+  let body: any;
+  try { body = await req.json(); } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
   }
+
+  // Generic config write — used by the app to save any key/value to pipeline_config
+  if (body?.action === "save-config") {
+    const { key, value } = body as { key: string; value: unknown };
+    if (!key || value === undefined) {
+      return Response.json({ error: "key and value required" }, { status: 400, headers: CORS });
+    }
+    const _URL = Deno.env.get("SUPABASE_URL")!;
+    const _KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const _hdrs = { "Content-Type": "application/json", apikey: _KEY, Authorization: "Bearer " + _KEY };
+    const r = await fetch(_URL + "/rest/v1/pipeline_config", {
+      method: "POST",
+      headers: { ..._hdrs, Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ key, value, updated_at: new Date().toISOString() }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      return Response.json({ error: (e as any).message ?? "Supabase error" }, { status: 500, headers: CORS });
+    }
+    return Response.json({ ok: true }, { headers: CORS });
+  }
+
+  const { document, filename = "document" } = body as {
+    document: { type: string; content: string }; filename: string;
+  };
   if (!document?.content?.trim()) {
     return Response.json({ error: "document.content is required" }, { status: 400, headers: CORS });
   }
