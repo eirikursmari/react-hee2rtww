@@ -398,6 +398,11 @@ export default function App() {
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [filters,          setFilters]           = useState({});
   const [showFilters,      setShowFilters]       = useState(false);
+  const [showAnalytics,    setShowAnalytics]     = useState(false);
+  const [analyticsQ,       setAnalyticsQ]        = useState("");
+  const [analyticsA,       setAnalyticsA]        = useState("");
+  const [analyticsLoading, setAnalyticsLoading]  = useState(false);
+  const [analyticsError,   setAnalyticsError]    = useState("");
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -460,6 +465,14 @@ export default function App() {
     );
   }
 
+  function downloadAnalytics() {
+    const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
+    const slug = analyticsQ.slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    downloadMarkdown(`rc-analytics-${slug}.md`,
+      `# Research Catalogue — Corpus Analysis\n\n**Question:** ${analyticsQ}  \n**Date:** ${date}\n\n---\n\n${analyticsA}\n`
+    );
+  }
+
   function downloadConversation() {
     const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
     const selected = (expositions || []).filter(e => selectedIds.has(e.id));
@@ -473,6 +486,29 @@ export default function App() {
     downloadMarkdown(`rc-analysis-${slug}.md`,
       `# Research Catalogue — Exposition Analysis\n\n**Date:** ${date}  \n**Search query:** ${query}\n\n---\n\n## Expositions analysed\n\n${expoList}\n\n---\n\n## Analysis\n\n${thread}\n`
     );
+  }
+
+  async function runAnalysis(e) {
+    e.preventDefault();
+    if (!analyticsQ.trim() || !apiKey || !semanticUrl) return;
+    setAnalyticsLoading(true);
+    setAnalyticsA("");
+    setAnalyticsError("");
+    try {
+      const analyticsUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/analytics");
+      const res = await fetch(analyticsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: analyticsQ, anthropicKey: apiKey, model: modelId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setAnalyticsA(data.answer);
+    } catch (err) {
+      setAnalyticsError("Analytics error: " + err.message);
+    } finally {
+      setAnalyticsLoading(false);
+    }
   }
 
   // Fetch live filter config from the edge function so new schema dimensions
@@ -1080,6 +1116,67 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {semanticUrl && (
+          <div className="analytics-bar">
+            <button
+              className={`analytics-toggle-btn${showAnalytics ? " analytics-toggle-active" : ""}`}
+              onClick={() => setShowAnalytics(s => !s)}
+              title="Ask analytical questions about the full corpus of 6,500+ expositions — trends, distributions, comparisons across journals and years."
+            >
+              {showAnalytics ? "▲" : "▼"} Corpus Analytics
+            </button>
+          </div>
+        )}
+
+        {showAnalytics && semanticUrl && (
+          <section className="analytics-panel">
+            <p className="analytics-hint">
+              Ask analytical questions about the full corpus (6,500+ expositions). Claude reads aggregated statistics — not individual works — to answer questions about trends, distributions, and patterns across the Research Catalogue.
+            </p>
+            <form className="analytics-form" onSubmit={runAnalysis}>
+              <textarea
+                className="analytics-input"
+                value={analyticsQ}
+                onChange={e => setAnalyticsQ(e.target.value)}
+                placeholder={'e.g. "What are the dominant research approaches and how have they changed over time?" or "Which journals publish the most impact-oriented work?"'}
+                rows={3}
+                disabled={analyticsLoading}
+              />
+              <div className="analytics-footer">
+                <div className="model-selector">
+                  {MODELS.map(m => (
+                    <button key={m.id} type="button"
+                      className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
+                      onClick={() => saveModel(m.id)} title={m.note}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="analytics-submit-btn" type="submit"
+                  disabled={analyticsLoading || !analyticsQ.trim() || !apiKey}>
+                  {analyticsLoading ? "Analysing…" : "Analyse"}
+                </button>
+              </div>
+            </form>
+            {analyticsLoading && (
+              <p className="answer-loading">Fetching corpus statistics and generating analysis…</p>
+            )}
+            {analyticsError && <p className="answer-error">{analyticsError}</p>}
+            {analyticsA && (
+              <div className="analytics-answer">
+                <div className="analytics-answer-header">
+                  <span className="analytics-answer-label">Analysis</span>
+                  <button className="download-btn" onClick={downloadAnalytics}
+                    title="Download analysis as Markdown">
+                    ↓ Download
+                  </button>
+                </div>
+                <div className="answer-body"><ReactMarkdown>{analyticsA}</ReactMarkdown></div>
+              </div>
+            )}
+          </section>
         )}
 
         {searchError && <div className="search-error">{searchError}</div>}

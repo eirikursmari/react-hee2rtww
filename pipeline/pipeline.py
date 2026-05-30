@@ -50,6 +50,20 @@ from supabase import create_client, Client
 
 load_dotenv()
 
+try:
+    from langdetect import detect as _langdetect, LangDetectException
+    LANGDETECT = True
+except ImportError:
+    LANGDETECT = False
+
+def detect_language(text: str) -> Optional[str]:
+    if not LANGDETECT or not text or len(text) < 40:
+        return None
+    try:
+        return _langdetect(text)
+    except Exception:
+        return None
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -363,10 +377,11 @@ def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None,
         "indexed_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Published-in portals/journals from RC API (not from Claude extraction)
     row["published_in"] = [
         p.get("name", "") for p in expo.get("published_in", []) if p.get("name")
     ]
+    lang_text = expo.get("abstract") or expo.get("description") or expo.get("title") or ""
+    row["language"] = detect_language(lang_text)
 
     if metadata:
         for k in STANDARD_ARRAY_KEYS:
@@ -511,8 +526,9 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
         "impact_evidence_level":  _clean_str(metadata.get("impact_evidence_level")),
         "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
         "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
-        "extracted_at":           datetime.now(timezone.utc).isoformat(),
-        "published_in":           [p.get("name", "") for p in expo.get("published_in", []) if p.get("name")],
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "published_in": [p.get("name", "") for p in expo.get("published_in", []) if p.get("name")],
+        "language":     detect_language(expo.get("abstract") or expo.get("description") or expo.get("title") or ""),
     }
 
     # Custom dimensions → custom_metadata JSONB
@@ -531,6 +547,34 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
     time.sleep(CLAUDE_DELAY)
 
 # ── Pipeline entry points ─────────────────────────────────────────────────────
+
+def run_language_only(limit: Optional[int] = None):
+    """Fast pass: detect and store language for all expositions. No Claude calls."""
+    _, sb, _ = get_clients()
+    if not LANGDETECT:
+        log.error("langdetect not installed — run: pip3 install --break-system-packages langdetect")
+        sys.exit(1)
+    expositions = fetch_internal_research()
+    log.info("Detecting language for %d expositions", len(expositions))
+    if limit:
+        expositions = expositions[:limit]
+    done = failed = 0
+    for i, expo in enumerate(expositions, 1):
+        expo_id = expo.get("id")
+        if not expo_id:
+            continue
+        text = expo.get("abstract") or expo.get("description") or expo.get("title") or ""
+        lang = detect_language(text)
+        try:
+            sb.table("expositions").update({"language": lang}).eq("id", expo_id).execute()
+            done += 1
+        except Exception as e:
+            log.warning("[%d/%d] Failed %d: %s", i, len(expositions), expo_id, e)
+            failed += 1
+        if i % 200 == 0:
+            log.info("  %d / %d updated", i, len(expositions))
+    log.info("Done — updated: %d  failed: %d", done, failed)
+
 
 def run_portals_only(limit: Optional[int] = None):
     """Fast pass: update only the published_in column from the RC master list. No Claude calls."""
@@ -629,8 +673,12 @@ if __name__ == "__main__":
                     help="Process only the first N expositions (for testing)")
     ap.add_argument("--portals-only", action="store_true",
                     help="Fast pass: update only published_in from RC API, no Claude calls")
+    ap.add_argument("--language-only", action="store_true",
+                    help="Fast pass: detect and store language for all expositions, no Claude calls")
     args = ap.parse_args()
     if args.portals_only:
         run_portals_only(limit=args.limit)
+    elif args.language_only:
+        run_language_only(limit=args.limit)
     else:
         run(force=args.force, extract_only=args.extract_only, limit=args.limit)
