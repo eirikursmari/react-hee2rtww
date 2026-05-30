@@ -539,7 +539,7 @@ export default function App() {
       endpoint: "https://aurora-sdg.labs.vu.nl/classifier/classify/aurora-sdg-multi",
       method: "POST",
       input: { field: "text", text_fields: ["title", "keywords", "abstract"] },
-      response: { array_path: "predictions", label_field: "sdg", score_field: "prediction", threshold: 0.5 },
+      response: { array_path: "predictions", label_field: "name", score_field: "", threshold: 0.5 },
       storage_key: "sdg_labels", rate_limit: 4.5, headers: {},
       tip: "SDG classification via Aurora mBERT model (104 languages)",
     };
