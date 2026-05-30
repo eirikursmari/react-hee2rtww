@@ -898,14 +898,14 @@ export default function App() {
             </div>
 
             <label className="settings-label" style={{ marginTop: 16 }}>
-              Semantic Search API URL <span className="settings-hint">(optional — Vercel endpoint)</span>
+              Semantic Search API URL <span className="settings-hint">(optional — Supabase edge function)</span>
             </label>
             <input className="settings-input" type="url" value={semanticUrl}
               onChange={e => save("url", setSemanticUrl, "rc_semantic_url")(e.target.value)}
-              placeholder="https://your-project.vercel.app/api/search" spellCheck={false} />
+              placeholder="https://your-project.supabase.co/functions/v1/swift-processor" spellCheck={false} />
             <p className="settings-note">
-              Leave blank to use RC keyword search. Once the semantic index is built and
-              deployed, paste the Supabase edge function URL here to enable full-text semantic search.
+              Paste your Supabase edge function URL here. Once set, use the Semantic / Keyword toggle
+              to switch between modes — both work with the URL configured.
             </p>
 
             {semanticUrl && (
