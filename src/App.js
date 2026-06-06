@@ -398,11 +398,12 @@ export default function App() {
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [filters,          setFilters]           = useState({});
   const [showFilters,      setShowFilters]       = useState(false);
-  const [showAnalytics,    setShowAnalytics]     = useState(false);
-  const [analyticsQ,       setAnalyticsQ]        = useState("");
-  const [analyticsA,       setAnalyticsA]        = useState("");
-  const [analyticsLoading, setAnalyticsLoading]  = useState(false);
-  const [analyticsError,   setAnalyticsError]    = useState("");
+  const [showAnalytics,         setShowAnalytics]         = useState(false);
+  const [analyticsQ,            setAnalyticsQ]            = useState("");
+  const [analyticsConversation, setAnalyticsConversation] = useState([]);
+  const [analyticsLoading,      setAnalyticsLoading]      = useState(false);
+  const [analyticsError,        setAnalyticsError]        = useState("");
+  const analyticsEndRef = useRef(null);
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -465,6 +466,12 @@ export default function App() {
     }
   }, [expoConversation]);
 
+  useEffect(() => {
+    if (analyticsConversation.length > 0) {
+      analyticsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [analyticsConversation]);
+
   function downloadAnswer() {
     const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
     const sources = (expositions || []).slice(0, 10)
@@ -478,9 +485,10 @@ export default function App() {
 
   function downloadAnalytics() {
     const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
-    const slug = analyticsQ.slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const slug = (analyticsConversation[0]?.q || "analytics").slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const thread = analyticsConversation.map(({ q, a }) => `**Q:** ${q}\n\n${a}`).join("\n\n---\n\n");
     downloadMarkdown(`rc-analytics-${slug}.md`,
-      `# Research Catalogue — Corpus Analysis\n\n**Question:** ${analyticsQ}  \n**Date:** ${date}\n\n---\n\n${analyticsA}\n`
+      `# Research Catalogue — Corpus Analysis\n\n**Date:** ${date}\n\n---\n\n${thread}\n`
     );
   }
 
@@ -595,20 +603,22 @@ export default function App() {
     e.preventDefault();
     if (!analyticsQ.trim() || !apiKey || !semanticUrl) return;
     setAnalyticsLoading(true);
-    setAnalyticsA("");
     setAnalyticsError("");
+    const currentQ = analyticsQ;
+    setAnalyticsQ("");
     try {
       const analyticsUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/analytics");
       const res = await fetch(analyticsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: analyticsQ, anthropicKey: apiKey, model: modelId }),
+        body: JSON.stringify({ question: currentQ, anthropicKey: apiKey, model: modelId, history: analyticsConversation }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
-      setAnalyticsA(data.answer);
+      setAnalyticsConversation(prev => [...prev, { q: currentQ, a: data.answer }]);
     } catch (err) {
       setAnalyticsError("Analytics error: " + err.message);
+      setAnalyticsQ(currentQ);
     } finally {
       setAnalyticsLoading(false);
     }
@@ -1405,12 +1415,58 @@ export default function App() {
             <p className="analytics-hint">
               Ask analytical questions about the full corpus (6,500+ expositions). Claude reads aggregated statistics — not individual works — to answer questions about trends, distributions, and patterns across the Research Catalogue.
             </p>
+            {analyticsConversation.length > 0 && (
+              <div className="analytics-answer">
+                <div className="analytics-answer-header">
+                  <span className="analytics-answer-label">Corpus Analysis</span>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button className="download-btn" onClick={downloadAnalytics}
+                      title="Download analysis as Markdown">
+                      ↓ Download
+                    </button>
+                    <button className="download-btn" onClick={() => setAnalyticsConversation([])}
+                      title="Clear conversation">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="expo-conversation">
+                  {analyticsConversation.map(({ q, a }, i) => (
+                    <div key={i} className="expo-exchange">
+                      <div className="expo-exchange-q">
+                        <span className="exchange-label">Q</span>
+                        <span className="exchange-text">{q}</span>
+                      </div>
+                      <div className="expo-exchange-a">
+                        <span className="exchange-label exchange-label-a">A</span>
+                        <div className="exchange-text"><ReactMarkdown>{a}</ReactMarkdown></div>
+                      </div>
+                    </div>
+                  ))}
+                  {analyticsLoading && (
+                    <div className="expo-exchange">
+                      <div className="expo-exchange-q">
+                        <span className="exchange-label">Q</span>
+                        <span className="exchange-text">{analyticsQ || "…"}</span>
+                      </div>
+                      <div className="expo-exchange-a">
+                        <span className="exchange-label exchange-label-a">A</span>
+                        <p className="answer-loading" style={{ margin: 0 }}>Fetching corpus statistics and generating analysis…</p>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={analyticsEndRef} />
+                </div>
+              </div>
+            )}
             <form className="analytics-form" onSubmit={runAnalysis}>
               <textarea
                 className="analytics-input"
                 value={analyticsQ}
                 onChange={e => setAnalyticsQ(e.target.value)}
-                placeholder={'e.g. "What are the dominant research approaches and how have they changed over time?" or "Which journals publish the most impact-oriented work?"'}
+                placeholder={analyticsConversation.length > 0
+                  ? "Ask a follow-up question…"
+                  : 'e.g. "What are the dominant research approaches and how have they changed over time?" or "Which journals publish the most impact-oriented work?"'}
                 rows={3}
                 disabled={analyticsLoading}
               />
@@ -1430,21 +1486,9 @@ export default function App() {
                 </button>
               </div>
             </form>
-            {analyticsLoading && (
-              <p className="answer-loading">Fetching corpus statistics and generating analysis…</p>
-            )}
             {analyticsError && <p className="answer-error">{analyticsError}</p>}
-            {analyticsA && (
-              <div className="analytics-answer">
-                <div className="analytics-answer-header">
-                  <span className="analytics-answer-label">Analysis</span>
-                  <button className="download-btn" onClick={downloadAnalytics}
-                    title="Download analysis as Markdown">
-                    ↓ Download
-                  </button>
-                </div>
-                <div className="answer-body"><ReactMarkdown>{analyticsA}</ReactMarkdown></div>
-              </div>
+            {analyticsConversation.length === 0 && analyticsLoading && (
+              <p className="answer-loading">Fetching corpus statistics and generating analysis…</p>
             )}
           </section>
         )}
