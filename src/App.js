@@ -398,6 +398,12 @@ export default function App() {
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [filters,          setFilters]           = useState({});
   const [showFilters,      setShowFilters]       = useState(false);
+  const [showAnalytics,         setShowAnalytics]         = useState(false);
+  const [analyticsQ,            setAnalyticsQ]            = useState("");
+  const [analyticsConversation, setAnalyticsConversation] = useState([]);
+  const [analyticsLoading,      setAnalyticsLoading]      = useState(false);
+  const [analyticsError,        setAnalyticsError]        = useState("");
+  const analyticsEndRef = useRef(null);
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -420,6 +426,17 @@ export default function App() {
   const [schemaError,         setSchemaError]         = useState("");
   const schemaFileRef = useRef(null);
   const [showApiKey,  setShowApiKey]  = useState(false);
+
+  // External classifiers
+  const [classifiers,       setClassifiers]       = useState(() => { try { return JSON.parse(localStorage.getItem("rc_classifiers") || "[]"); } catch { return []; } });
+  const [classifiersSaving, setClassifiersSaving] = useState(false);
+  const [showAddClassifier, setShowAddClassifier] = useState(false);
+  const [clfForm, setClfForm] = useState({
+    name: "", endpoint: "", method: "POST",
+    inputField: "text", textTitle: true, textKeywords: true, textAbstract: true,
+    arrayPath: "", labelField: "", scoreField: "", threshold: "0.5",
+    rateLimit: "5", storageKey: "", tip: "", headersRaw: "",
+  });
 
   const [expositions,   setExpositions]   = useState(null);
   const [isSemantic,    setIsSemantic]    = useState(false);
@@ -449,6 +466,12 @@ export default function App() {
     }
   }, [expoConversation]);
 
+  useEffect(() => {
+    if (analyticsConversation.length > 0) {
+      analyticsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [analyticsConversation]);
+
   function downloadAnswer() {
     const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
     const sources = (expositions || []).slice(0, 10)
@@ -457,6 +480,15 @@ export default function App() {
     const slug = query.slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
     downloadMarkdown(`rc-answer-${slug}.md`,
       `# Research Catalogue — AI Answer\n\n**Query:** ${query}  \n**Date:** ${date}\n\n---\n\n${answer}\n\n---\n\n## Sources\n\n${sources}\n`
+    );
+  }
+
+  function downloadAnalytics() {
+    const date = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
+    const slug = (analyticsConversation[0]?.q || "analytics").slice(0, 40).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const thread = analyticsConversation.map(({ q, a }) => `**Q:** ${q}\n\n${a}`).join("\n\n---\n\n");
+    downloadMarkdown(`rc-analytics-${slug}.md`,
+      `# Research Catalogue — Corpus Analysis\n\n**Date:** ${date}\n\n---\n\n${thread}\n`
     );
   }
 
@@ -473,6 +505,123 @@ export default function App() {
     downloadMarkdown(`rc-analysis-${slug}.md`,
       `# Research Catalogue — Exposition Analysis\n\n**Date:** ${date}  \n**Search query:** ${query}\n\n---\n\n## Expositions analysed\n\n${expoList}\n\n---\n\n## Analysis\n\n${thread}\n`
     );
+  }
+
+  function autoKey(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  }
+
+  function parseHeadersRaw(raw) {
+    const result = {};
+    for (const line of (raw || "").split("\n")) {
+      const i = line.indexOf(":");
+      if (i > 0) result[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    }
+    return result;
+  }
+
+  async function saveClassifiers(list) {
+    const updated = list ?? classifiers;
+    localStorage.setItem("rc_classifiers", JSON.stringify(updated));
+    if (!semanticUrl) return;
+    setClassifiersSaving(true);
+    try {
+      const builderUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/schema-builder");
+      const res = await fetch(builderUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save-config", key: "classifier_config", value: updated }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    } catch (err) {
+      console.warn("Could not sync classifiers to Supabase:", err.message);
+    } finally {
+      setClassifiersSaving(false);
+    }
+  }
+
+  function addAuroraSdgTemplate() {
+    if (classifiers.some(c => c.id === "aurora-sdg-multi")) return;
+    const tpl = {
+      id: "aurora-sdg-multi", name: "SDG Labels (Aurora)", enabled: true,
+      endpoint: "https://aurora-sdg.labs.vu.nl/classifier/classify/aurora-sdg-multi",
+      method: "POST",
+      input: { field: "text", text_fields: ["title", "keywords", "abstract"] },
+      response: { array_path: "predictions", label_field: "name", score_field: "", threshold: 0.5 },
+      storage_key: "sdg_labels", rate_limit: 4.5, headers: {},
+      tip: "SDG classification via Aurora mBERT model (104 languages)",
+    };
+    const updated = [...classifiers, tpl];
+    setClassifiers(updated);
+    saveClassifiers(updated);
+  }
+
+  function toggleClassifierEnabled(id) {
+    const updated = classifiers.map(c => c.id === id ? { ...c, enabled: !c.enabled } : c);
+    setClassifiers(updated);
+    saveClassifiers(updated);
+  }
+
+  function deleteClassifier(id) {
+    const updated = classifiers.filter(c => c.id !== id);
+    setClassifiers(updated);
+    saveClassifiers(updated);
+  }
+
+  function addNewClassifier() {
+    const textFields = [
+      ...(clfForm.textTitle    ? ["title"]    : []),
+      ...(clfForm.textKeywords ? ["keywords"] : []),
+      ...(clfForm.textAbstract ? ["abstract"] : []),
+    ];
+    const clf = {
+      id: Date.now().toString(), name: clfForm.name.trim(), enabled: true,
+      endpoint: clfForm.endpoint.trim(), method: clfForm.method,
+      input:    { field: clfForm.inputField || "text", text_fields: textFields },
+      response: {
+        array_path:  clfForm.arrayPath.trim(),
+        label_field: clfForm.labelField.trim(),
+        score_field: clfForm.scoreField.trim(),
+        threshold:   parseFloat(clfForm.threshold) || 0.5,
+      },
+      storage_key: (clfForm.storageKey.trim() || autoKey(clfForm.name)).replace(/[^a-z0-9_]/g, ""),
+      rate_limit: parseFloat(clfForm.rateLimit) || 5,
+      headers: parseHeadersRaw(clfForm.headersRaw),
+      tip: clfForm.tip.trim(),
+    };
+    const updated = [...classifiers, clf];
+    setClassifiers(updated);
+    saveClassifiers(updated);
+    setShowAddClassifier(false);
+    setClfForm({ name: "", endpoint: "", method: "POST", inputField: "text",
+      textTitle: true, textKeywords: true, textAbstract: true,
+      arrayPath: "", labelField: "", scoreField: "", threshold: "0.5",
+      rateLimit: "5", storageKey: "", tip: "", headersRaw: "" });
+  }
+
+  async function runAnalysis(e) {
+    e.preventDefault();
+    if (!analyticsQ.trim() || !apiKey || !semanticUrl) return;
+    setAnalyticsLoading(true);
+    setAnalyticsError("");
+    const currentQ = analyticsQ;
+    setAnalyticsQ("");
+    try {
+      const analyticsUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/analytics");
+      const res = await fetch(analyticsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: currentQ, anthropicKey: apiKey, model: modelId, history: analyticsConversation }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setAnalyticsConversation(prev => [...prev, { q: currentQ, a: data.answer }]);
+    } catch (err) {
+      setAnalyticsError("Analytics error: " + err.message);
+      setAnalyticsQ(currentQ);
+    } finally {
+      setAnalyticsLoading(false);
+    }
   }
 
   // Fetch live filter config from the edge function so new schema dimensions
@@ -862,14 +1011,14 @@ export default function App() {
             </div>
 
             <label className="settings-label" style={{ marginTop: 16 }}>
-              Semantic Search API URL <span className="settings-hint">(optional — Vercel endpoint)</span>
+              Semantic Search API URL <span className="settings-hint">(optional — Supabase edge function)</span>
             </label>
             <input className="settings-input" type="url" value={semanticUrl}
               onChange={e => save("url", setSemanticUrl, "rc_semantic_url")(e.target.value)}
-              placeholder="https://your-project.vercel.app/api/search" spellCheck={false} />
+              placeholder="https://your-project.supabase.co/functions/v1/swift-processor" spellCheck={false} />
             <p className="settings-note">
-              Leave blank to use RC keyword search. Once the semantic index is built and
-              deployed, paste the Supabase edge function URL here to enable full-text semantic search.
+              Paste your Supabase edge function URL here. Once set, use the Semantic / Keyword toggle
+              to switch between modes — both work with the URL configured.
             </p>
 
             {semanticUrl && (
@@ -921,6 +1070,173 @@ export default function App() {
                     ) : (
                       <p className="settings-note">No new dimensions were identified in this document.</p>
                     )}
+                  </div>
+                )}
+
+                {/* External classifiers */}
+                <div className="settings-section-divider" />
+                <label className="settings-label" style={{ marginTop: 12 }}>
+                  External Classifiers <span className="settings-hint">(call any HTTP API to add structured labels)</span>
+                </label>
+                <p className="settings-note">
+                  Classifiers tag every exposition by calling an external API — no AI required. After configuring, run <code>python3 pipeline.py --classify-only</code> on the server. Labels appear automatically as search filter chips.
+                </p>
+                {classifiers.length > 0 && (
+                  <div className="classifier-list">
+                    {classifiers.map(clf => (
+                      <div key={clf.id} className="classifier-item">
+                        <div className="classifier-item-header">
+                          <label className="classifier-toggle-label">
+                            <input type="checkbox" checked={clf.enabled !== false}
+                              onChange={() => toggleClassifierEnabled(clf.id)} />
+                            <strong className="classifier-item-name">{clf.name}</strong>
+                            <code className="classifier-item-key">{clf.storage_key}</code>
+                          </label>
+                          <button className="classifier-delete-btn" title="Remove"
+                            onClick={() => deleteClassifier(clf.id)}>×</button>
+                        </div>
+                        <div className="classifier-item-url">{clf.endpoint}</div>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                      <button className="filter-save-btn" onClick={() => saveClassifiers()}
+                        disabled={classifiersSaving}>
+                        {classifiersSaving ? "Saving…" : "Sync to Supabase"}
+                      </button>
+                      <span className="settings-note" style={{ margin: 0 }}>pipeline reads from Supabase</span>
+                    </div>
+                  </div>
+                )}
+                {!showAddClassifier ? (
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button className="custom-cat-add-btn" onClick={() => setShowAddClassifier(true)}>
+                      + Add classifier
+                    </button>
+                    <button className="custom-cat-add-btn" onClick={addAuroraSdgTemplate}
+                      disabled={classifiers.some(c => c.id === "aurora-sdg-multi")}
+                      title="Adds the Aurora Universities SDG classifier — tags expositions against the 17 UN Sustainable Development Goals">
+                      {classifiers.some(c => c.id === "aurora-sdg-multi") ? "Aurora SDG added" : "+ Aurora SDG (template)"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="classifier-form">
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Name *</span>
+                        <input className="filter-save-input" value={clfForm.name}
+                          onChange={e => { const n = e.target.value; setClfForm(f => ({ ...f, name: n, storageKey: f.storageKey || autoKey(n) })); }}
+                          placeholder="SDG Labels (Aurora)" />
+                      </div>
+                      <div className="clf-field">
+                        <span className="clf-label">Storage key *</span>
+                        <input className="filter-save-input clf-mono" value={clfForm.storageKey}
+                          onChange={e => setClfForm(f => ({ ...f, storageKey: e.target.value }))}
+                          placeholder="sdg_labels" />
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Endpoint URL *</span>
+                        <input className="filter-save-input clf-mono" type="url" value={clfForm.endpoint}
+                          onChange={e => setClfForm(f => ({ ...f, endpoint: e.target.value }))}
+                          placeholder="https://example.com/classify" />
+                      </div>
+                      <div className="clf-field clf-field-narrow">
+                        <span className="clf-label">Method</span>
+                        <select className="clf-select" value={clfForm.method}
+                          onChange={e => setClfForm(f => ({ ...f, method: e.target.value }))}>
+                          <option>POST</option><option>GET</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-narrow">
+                        <span className="clf-label">Input field</span>
+                        <input className="filter-save-input clf-mono" value={clfForm.inputField}
+                          onChange={e => setClfForm(f => ({ ...f, inputField: e.target.value }))}
+                          placeholder="text" />
+                      </div>
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Text to classify</span>
+                        <div className="clf-checkboxes">
+                          {[["textTitle","Title"],["textKeywords","Keywords"],["textAbstract","Abstract"]].map(([key, lbl]) => (
+                            <label key={key} className="clf-check-label">
+                              <input type="checkbox" checked={!!clfForm[key]}
+                                onChange={e => setClfForm(f => ({ ...f, [key]: e.target.checked }))} />
+                              {lbl}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Response array path <span className="clf-hint">(blank = root)</span></span>
+                        <input className="filter-save-input clf-mono" value={clfForm.arrayPath}
+                          onChange={e => setClfForm(f => ({ ...f, arrayPath: e.target.value }))}
+                          placeholder="predictions" />
+                      </div>
+                      <div className="clf-field">
+                        <span className="clf-label">Label field <span className="clf-hint">(blank if strings)</span></span>
+                        <input className="filter-save-input clf-mono" value={clfForm.labelField}
+                          onChange={e => setClfForm(f => ({ ...f, labelField: e.target.value }))}
+                          placeholder="sdg" />
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field">
+                        <span className="clf-label">Score field <span className="clf-hint">(optional)</span></span>
+                        <input className="filter-save-input clf-mono" value={clfForm.scoreField}
+                          onChange={e => setClfForm(f => ({ ...f, scoreField: e.target.value }))}
+                          placeholder="prediction" />
+                      </div>
+                      {clfForm.scoreField && (
+                        <div className="clf-field clf-field-narrow">
+                          <span className="clf-label">Threshold (0–1)</span>
+                          <input className="filter-save-input clf-mono" type="number"
+                            min="0" max="1" step="0.05" value={clfForm.threshold}
+                            onChange={e => setClfForm(f => ({ ...f, threshold: e.target.value }))} />
+                        </div>
+                      )}
+                      <div className="clf-field clf-field-narrow">
+                        <span className="clf-label">Rate limit (req/s)</span>
+                        <input className="filter-save-input clf-mono" type="number"
+                          min="0.1" step="0.5" value={clfForm.rateLimit}
+                          onChange={e => setClfForm(f => ({ ...f, rateLimit: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Filter tip <span className="clf-hint">(shown to users)</span></span>
+                        <input className="filter-save-input" value={clfForm.tip}
+                          onChange={e => setClfForm(f => ({ ...f, tip: e.target.value }))}
+                          placeholder="SDG classification via Aurora mBERT (104 languages)" />
+                      </div>
+                    </div>
+                    <div className="clf-row">
+                      <div className="clf-field clf-field-grow">
+                        <span className="clf-label">Custom headers <span className="clf-hint">(one per line: Key: Value)</span></span>
+                        <textarea className="custom-cat-desc" rows={2} value={clfForm.headersRaw}
+                          onChange={e => setClfForm(f => ({ ...f, headersRaw: e.target.value }))}
+                          placeholder={"Authorization: Bearer token\nX-API-Key: key"} />
+                      </div>
+                    </div>
+                    <div className="custom-cat-footer">
+                      <span className="custom-cat-note">Storage key is the filter dimension ID — must be unique and lowercase.</span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="filter-clear-inline" onClick={() => {
+                          setShowAddClassifier(false);
+                          setClfForm({ name: "", endpoint: "", method: "POST", inputField: "text",
+                            textTitle: true, textKeywords: true, textAbstract: true,
+                            arrayPath: "", labelField: "", scoreField: "", threshold: "0.5",
+                            rateLimit: "5", storageKey: "", tip: "", headersRaw: "" });
+                        }}>Cancel</button>
+                        <button className="filter-save-btn" onClick={addNewClassifier}
+                          disabled={!clfForm.name.trim() || !clfForm.endpoint.trim()}>
+                          Add classifier
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </>
@@ -1080,6 +1396,101 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {semanticUrl && (
+          <div className="analytics-bar">
+            <button
+              className={`analytics-toggle-btn${showAnalytics ? " analytics-toggle-active" : ""}`}
+              onClick={() => setShowAnalytics(s => !s)}
+              title="Ask analytical questions about the full corpus of 6,500+ expositions — trends, distributions, comparisons across journals and years."
+            >
+              {showAnalytics ? "▲" : "▼"} Corpus Analytics
+            </button>
+          </div>
+        )}
+
+        {showAnalytics && semanticUrl && (
+          <section className="analytics-panel">
+            <p className="analytics-hint">
+              Ask analytical questions about the full corpus (6,500+ expositions). Claude reads aggregated statistics — not individual works — to answer questions about trends, distributions, and patterns across the Research Catalogue.
+            </p>
+            {analyticsConversation.length > 0 && (
+              <div className="analytics-answer">
+                <div className="analytics-answer-header">
+                  <span className="analytics-answer-label">Corpus Analysis</span>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button className="download-btn" onClick={downloadAnalytics}
+                      title="Download analysis as Markdown">
+                      ↓ Download
+                    </button>
+                    <button className="download-btn" onClick={() => setAnalyticsConversation([])}
+                      title="Clear conversation">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="expo-conversation">
+                  {analyticsConversation.map(({ q, a }, i) => (
+                    <div key={i} className="expo-exchange">
+                      <div className="expo-exchange-q">
+                        <span className="exchange-label">Q</span>
+                        <span className="exchange-text">{q}</span>
+                      </div>
+                      <div className="expo-exchange-a">
+                        <span className="exchange-label exchange-label-a">A</span>
+                        <div className="exchange-text"><ReactMarkdown>{a}</ReactMarkdown></div>
+                      </div>
+                    </div>
+                  ))}
+                  {analyticsLoading && (
+                    <div className="expo-exchange">
+                      <div className="expo-exchange-q">
+                        <span className="exchange-label">Q</span>
+                        <span className="exchange-text">{analyticsQ || "…"}</span>
+                      </div>
+                      <div className="expo-exchange-a">
+                        <span className="exchange-label exchange-label-a">A</span>
+                        <p className="answer-loading" style={{ margin: 0 }}>Fetching corpus statistics and generating analysis…</p>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={analyticsEndRef} />
+                </div>
+              </div>
+            )}
+            <form className="analytics-form" onSubmit={runAnalysis}>
+              <textarea
+                className="analytics-input"
+                value={analyticsQ}
+                onChange={e => setAnalyticsQ(e.target.value)}
+                placeholder={analyticsConversation.length > 0
+                  ? "Ask a follow-up question…"
+                  : 'e.g. "What are the dominant research approaches and how have they changed over time?" or "Which journals publish the most impact-oriented work?"'}
+                rows={3}
+                disabled={analyticsLoading}
+              />
+              <div className="analytics-footer">
+                <div className="model-selector">
+                  {MODELS.map(m => (
+                    <button key={m.id} type="button"
+                      className={`model-btn${modelId === m.id ? " model-btn-active" : ""}`}
+                      onClick={() => saveModel(m.id)} title={m.note}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="analytics-submit-btn" type="submit"
+                  disabled={analyticsLoading || !analyticsQ.trim() || !apiKey}>
+                  {analyticsLoading ? "Analysing…" : "Analyse"}
+                </button>
+              </div>
+            </form>
+            {analyticsError && <p className="answer-error">{analyticsError}</p>}
+            {analyticsConversation.length === 0 && analyticsLoading && (
+              <p className="answer-loading">Fetching corpus statistics and generating analysis…</p>
+            )}
+          </section>
         )}
 
         {searchError && <div className="search-error">{searchError}</div>}

@@ -21,6 +21,9 @@ ALTER TABLE expositions ADD COLUMN IF NOT EXISTS custom_metadata jsonb;
 -- Portal/journal column — populated from RC API published_in field
 ALTER TABLE expositions ADD COLUMN IF NOT EXISTS published_in text[];
 
+-- Language column — ISO 639-1 code detected from abstract/title
+ALTER TABLE expositions ADD COLUMN IF NOT EXISTS language text;
+
 -- After running: python3 pipeline.py --portals-only
 -- Run this query to see all distinct portal/journal names in your data:
 --
