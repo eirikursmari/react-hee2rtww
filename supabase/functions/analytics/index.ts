@@ -110,13 +110,14 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
 
-  let question: string, anthropicKey: string, model: string;
+  let question: string, anthropicKey: string, model: string,
+      history: { q: string; a: string }[];
   try {
-    ({ question, anthropicKey, model = "claude-sonnet-4-6" } = await req.json());
+    ({ question, anthropicKey, model = "claude-sonnet-4-6", history = [] } = await req.json());
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
   }
-  if (!question?.trim())    return Response.json({ error: "question is required"    }, { status: 400, headers: CORS });
+  if (!question?.trim())     return Response.json({ error: "question is required"     }, { status: 400, headers: CORS });
   if (!anthropicKey?.trim()) return Response.json({ error: "anthropicKey is required" }, { status: 400, headers: CORS });
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -126,6 +127,21 @@ Deno.serve(async (req) => {
   try {
     const rows  = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
     const stats = buildStats(rows);
+
+    // Build messages — stats appear only in the first user message to avoid
+    // repeating them for every follow-up (saves tokens, keeps context clean)
+    const firstQ = history.length > 0 ? history[0].q : question;
+    const messages: { role: string; content: string }[] = [
+      { role: "user", content: `Statistics:\n\n${stats}\n\nQuestion: ${firstQ}` },
+    ];
+    if (history.length > 0) {
+      messages.push({ role: "assistant", content: history[0].a });
+      for (let i = 1; i < history.length; i++) {
+        messages.push({ role: "user",      content: history[i].q });
+        messages.push({ role: "assistant", content: history[i].a });
+      }
+      messages.push({ role: "user", content: question });
+    }
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -137,8 +153,8 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model,
         max_tokens: 2048,
-        system: `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation.`,
-        messages: [{ role: "user", content: `Statistics:\n\n${stats}\n\nQuestion: ${question}` }],
+        system: `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation. This is a conversation — build on your previous answers when relevant.`,
+        messages,
       }),
     });
 
