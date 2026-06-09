@@ -97,6 +97,10 @@ Deno.serve(async (req) => {
 
   // Generic config write — used by the app to save any key/value to pipeline_config
   if (body?.action === "save-config") {
+    const authKey = req.headers.get("x-anthropic-key") ?? "";
+    if (!authKey.startsWith("sk-ant-")) {
+      return Response.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+    }
     const { key, value } = body as { key: string; value: unknown };
     if (!key || value === undefined) {
       return Response.json({ error: "key and value required" }, { status: 400, headers: CORS });

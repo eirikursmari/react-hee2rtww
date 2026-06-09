@@ -378,13 +378,6 @@ const FILTER_OPTIONS = [
     ]},
 ];
 
-const EXAMPLES = [
-  "artistic practice as research",
-  "sound art and performance",
-  "material culture and craft",
-  "digital and interactive art",
-];
-
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -397,8 +390,6 @@ export default function App() {
   const [resultLimit,      setResultLimit]       = useState(() => Number(localStorage.getItem("rc_result_limit")) || 10);
   const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
   const [filters,          setFilters]           = useState({});
-  const [showFilters,      setShowFilters]       = useState(false);
-  const [showAnalytics,         setShowAnalytics]         = useState(false);
   const [analyticsQ,            setAnalyticsQ]            = useState("");
   const [analyticsConversation, setAnalyticsConversation] = useState([]);
   const [analyticsLoading,      setAnalyticsLoading]      = useState(false);
@@ -539,7 +530,7 @@ export default function App() {
       const builderUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/schema-builder");
       const res = await fetch(builderUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-anthropic-key": apiKey },
         body: JSON.stringify({ action: "save-config", key: "classifier_config", value: updated }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
@@ -654,6 +645,11 @@ export default function App() {
     setActiveTab(tab);
     if (tab === "semantic") { setUseSemanticSearch(true);  localStorage.setItem("rc_use_semantic", "1"); }
     else if (tab === "keyword") { setUseSemanticSearch(false); localStorage.setItem("rc_use_semantic", "0"); }
+    setExpositions(null);
+    setAnswer("");
+    setAnswerError("");
+    setSearchError("");
+    setLoadingMsg("");
   };
 
   const save = (key, setter, storageKey) => (val) => {
@@ -813,7 +809,6 @@ export default function App() {
       } else {
         results = (await fetchKeywordResults(q)).filter(e => e.title?.trim()).slice(0, resultLimit);
       }
-      if (results.length > 0) console.log("First result:", results[0]);
       setExpositions(results);
       setIsSemantic(semantic);
     } catch (e) {

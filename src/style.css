@@ -81,13 +81,6 @@ a:hover {
   letter-spacing: -0.03em;
 }
 
-.app-subtitle {
-  margin: 5px 0 0;
-  font-size: 13px;
-  opacity: 0.5;
-  font-style: italic;
-}
-
 /* ── Settings modal ── */
 
 .settings-overlay {
@@ -149,6 +142,8 @@ a:hover {
   border-bottom: 2px solid #000;
   margin-bottom: 24px;
   margin-top: 24px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-btn {
@@ -163,6 +158,8 @@ a:hover {
   color: #666;
   margin-bottom: -2px;
   transition: color 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .tab-btn:hover:not(.tab-btn-disabled) {
@@ -311,28 +308,6 @@ a:hover {
 
 /* ── Search options ── */
 
-.search-options {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 10px;
-}
-
-.mode-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.mode-row-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #888;
-}
-
 .deep-toggle {
   display: flex;
   align-items: center;
@@ -381,34 +356,6 @@ a:hover {
 }
 
 .model-btn-active {
-  background: #000;
-  border-color: #000;
-  color: #fff;
-}
-
-.mode-toggle-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.mode-toggle-btn {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 3px 10px;
-  border: 1px solid #ccc;
-  background: #fff;
-  color: #666;
-  cursor: pointer;
-}
-
-.mode-toggle-btn:first-child {
-  border-right: none;
-}
-
-.mode-toggle-btn.mode-toggle-active {
   background: #000;
   border-color: #000;
   color: #fff;
@@ -1522,28 +1469,6 @@ a:hover {
 
 /* ── Corpus Analytics ── */
 
-.analytics-bar {
-  margin-bottom: 14px;
-}
-
-.analytics-toggle-btn {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 3px 10px;
-  border: 1px solid #ccc;
-  background: #fff;
-  color: #666;
-  cursor: pointer;
-}
-
-.analytics-toggle-btn:hover,
-.analytics-toggle-btn.analytics-toggle-active {
-  border-color: #000;
-  color: #000;
-}
-
 .analytics-panel {
   border: 1px solid #e0e0e0;
   padding: 16px 18px;
@@ -1644,45 +1569,6 @@ a:hover {
 
 /* ── Landing ── */
 
-.landing {
-  padding: 60px 0 40px;
-  text-align: center;
-}
-
-.landing-lead {
-  font-size: 18px;
-  margin: 0 0 14px;
-  line-height: 1.5;
-}
-
-.landing-sub {
-  font-size: 13px;
-  color: #777;
-  margin: 0 0 16px;
-}
-
-.example-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
-.example-btn {
-  padding: 7px 18px;
-  font-family: Georgia, serif;
-  font-size: 13px;
-  background: #fff;
-  border: 1px solid #000;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.example-btn:hover {
-  background: #000;
-  color: #fff;
-}
-
 /* ── Footer ── */
 
 .app-footer {
@@ -1724,14 +1610,8 @@ a:hover {
     display: none;
   }
 
-  .landing {
-    padding: 36px 0 24px;
-  }
-
-  .landing-lead {
-    font-size: 15px;
-  }
-
+  
+  
   .results-header {
     gap: 10px;
   }
