@@ -838,12 +838,16 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
         # Avoid the map.rcdata.org dependency — query Supabase directly for rows
         # that need extraction (no extracted_at, not marked unavailable).
         all_rows = fetch_all_expositions_from_db(
-            sb, "id,title,author,abstract,published_in,unavailable,extracted_at"
+            sb, "id,title,author,abstract,published_in,unavailable,extracted_at,research_approach"
         )
-        expositions = [r for r in all_rows
-                       if not r.get("unavailable") and r.get("extracted_at") is None]
         if force:
             expositions = all_rows
+        else:
+            expositions = [r for r in all_rows
+                           if not r.get("unavailable") and (
+                               r.get("extracted_at") is None or
+                               not r.get("research_approach")
+                           )]
         log.info("Found %d expositions needing extraction (from Supabase)", len(expositions))
     else:
         expositions = fetch_internal_research()
