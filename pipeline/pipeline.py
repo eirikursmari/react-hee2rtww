@@ -507,6 +507,15 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
     log.info("  Stored %d chunk(s) across %d page(s)", total_chunks, len(pages))
 
 
+def _parse_published_in(pub) -> list:
+    """Accept RC API format (list of dicts with 'name') or Supabase format (list of strings)."""
+    if not pub:
+        return []
+    if isinstance(pub[0], dict):
+        return [p.get("name", "") for p in pub if p.get("name")]
+    return [p for p in pub if isinstance(p, str) and p]
+
+
 def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
                             schema: Optional[dict] = None):
     """Run extraction on an already-indexed exposition without re-embedding."""
@@ -553,7 +562,7 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
         "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
         "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
         "extracted_at": datetime.now(timezone.utc).isoformat(),
-        "published_in": [p.get("name", "") for p in expo.get("published_in", []) if p.get("name")],
+        "published_in": _parse_published_in(expo.get("published_in")),
         "language":     detect_language(expo.get("abstract") or expo.get("description") or expo.get("title") or ""),
     }
 
@@ -825,8 +834,20 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
              len(schema.get("text_dimensions", [])),
              len(schema.get("custom_dimensions", [])))
 
-    expositions = fetch_internal_research()
-    log.info("Found %d expositions in master list", len(expositions))
+    if extract_only:
+        # Avoid the map.rcdata.org dependency — query Supabase directly for rows
+        # that need extraction (no extracted_at, not marked unavailable).
+        all_rows = fetch_all_expositions_from_db(
+            sb, "id,title,author,abstract,published_in,unavailable,extracted_at"
+        )
+        expositions = [r for r in all_rows
+                       if not r.get("unavailable") and r.get("extracted_at") is None]
+        if force:
+            expositions = all_rows
+        log.info("Found %d expositions needing extraction (from Supabase)", len(expositions))
+    else:
+        expositions = fetch_internal_research()
+        log.info("Found %d expositions in master list", len(expositions))
 
     if limit:
         expositions = expositions[:limit]
@@ -842,15 +863,7 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
         prefix = f"[{i}/{len(expositions)}]"
 
         if extract_only:
-            # Only process expositions that are already indexed but not extracted
-            if not is_indexed(sb, expo_id):
-                log.info("%s Not indexed yet, skipping %d", prefix, expo_id)
-                skipped += 1
-                continue
-            if not needs_extraction(sb, expo_id) and not force:
-                log.info("%s Already extracted %d — skipping", prefix, expo_id)
-                skipped += 1
-                continue
+            # List was pre-filtered from Supabase (already indexed, not yet extracted).
             if not anthropic_client:
                 log.error("--extract-only requires ANTHROPIC_API_KEY to be set")
                 sys.exit(1)
