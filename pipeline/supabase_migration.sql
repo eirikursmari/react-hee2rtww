@@ -24,6 +24,11 @@ ALTER TABLE expositions ADD COLUMN IF NOT EXISTS published_in text[];
 -- Language column — ISO 639-1 code detected from abstract/title
 ALTER TABLE expositions ADD COLUMN IF NOT EXISTS language text;
 
+-- Unavailable flag — set when the RC content API returns 404 for an exposition
+-- (unpublished, deleted, or made private after indexing). These are excluded
+-- from "pending extraction" counts and skipped by --extract-only runs.
+ALTER TABLE expositions ADD COLUMN IF NOT EXISTS unavailable boolean DEFAULT false;
+
 -- After running: python3 pipeline.py --portals-only
 -- Run this query to see all distinct portal/journal names in your data:
 --

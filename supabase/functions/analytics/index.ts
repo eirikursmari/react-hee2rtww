@@ -10,7 +10,7 @@ const CORS = {
 };
 
 const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
-               "methodological_framing,impact_types,language";
+               "methodological_framing,impact_types,language,unavailable";
 
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {
   const PAGE = 1000;
@@ -54,7 +54,10 @@ function fmt(data: [string, number][], n = 20): string {
 
 function buildStats(rows: any[]): string {
   const total = rows.length;
-  const extracted = rows.filter(r => Array.isArray(r.research_approach) && r.research_approach.length > 0).length;
+  const hasMeta = (r: any) => Array.isArray(r.research_approach) && r.research_approach.length > 0;
+  const extracted   = rows.filter(hasMeta).length;
+  const unavailable = rows.filter(r => r.unavailable && !hasMeta(r)).length;
+  const pending     = total - extracted - unavailable;
 
   // Year counts
   const yearMap: Record<string, number> = {};
@@ -87,7 +90,7 @@ function buildStats(rows: any[]): string {
   const langSection = dist(rows, "language").length > 0
     ? `\nLANGUAGE:\n${fmt(dist(rows, "language"), 20)}\n` : "";
 
-  return `CORPUS: ${total} expositions (${extracted} with extracted metadata, ${total - extracted} pending)
+  return `CORPUS: ${total} expositions (${extracted} with extracted metadata, ${unavailable} no longer available on RC so unextractable, ${pending} pending extraction)
 
 PUBLISHED IN:\n${fmt(dist(rows, "published_in", true), 30)}
 

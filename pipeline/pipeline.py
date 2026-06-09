@@ -230,18 +230,33 @@ def fetch_internal_research() -> list[dict]:
     return data.get("expositions", data.get("results", []))
 
 
-def fetch_expo_json(expo_id: int) -> Optional[dict]:
+# Sentinel distinguishing a definitive 404 (exposition gone from RC) from a
+# transient fetch failure (timeout, DNS) — only the former marks `unavailable`.
+NOT_FOUND = object()
+
+
+def fetch_expo_json(expo_id: int):
     url = f"{RC_EXPO_JSON_URL}/{expo_id}"
     try:
         r = requests.get(url, timeout=30)
         if r.status_code == 404:
             log.warning("  404 for exposition %d", expo_id)
-            return None
+            return NOT_FOUND
         r.raise_for_status()
         return r.json()
     except Exception as e:
         log.error("  Failed to fetch %d: %s", expo_id, e)
         return None
+
+
+def mark_unavailable(sb: Client, expo_id: int):
+    """Flag an exposition whose content 404s on RC so it is excluded from
+    pending-extraction counts and skipped by future --extract-only runs."""
+    try:
+        sb.table("expositions").update({"unavailable": True}).eq("id", expo_id).execute()
+        log.info("  Marked %d unavailable (404 from RC)", expo_id)
+    except Exception as e:
+        log.warning("  Could not mark %d unavailable: %s", expo_id, e)
 
 # ── Schema loading ────────────────────────────────────────────────────────────
 
@@ -430,11 +445,15 @@ def is_indexed(sb: Client, expo_id: int) -> bool:
 
 
 def needs_extraction(sb: Client, expo_id: int) -> bool:
-    """True if the exposition has no extracted_at timestamp."""
-    r = sb.table("expositions").select("extracted_at").eq("id", expo_id).execute()
+    """True if the exposition has no extracted_at timestamp.
+    Expositions marked unavailable (404 on RC) are excluded — use --force to retry them."""
+    r = sb.table("expositions").select("extracted_at,unavailable").eq("id", expo_id).execute()
     if not r.data:
         return True
-    return r.data[0].get("extracted_at") is None
+    row = r.data[0]
+    if row.get("unavailable"):
+        return False
+    return row.get("extracted_at") is None
 
 # ── Core indexing logic ───────────────────────────────────────────────────────
 
@@ -445,6 +464,10 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
     log.info("  Fetching full JSON for '%s' (%d)", title, expo_id)
 
     content = fetch_expo_json(expo_id)
+    if content is NOT_FOUND:
+        upsert_exposition(sb, expo, None, schema)
+        mark_unavailable(sb, expo_id)
+        return
 
     metadata = None
     if anthropic_client and content:
@@ -492,6 +515,9 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
     log.info("  Fetching JSON for extraction: '%s' (%d)", title, expo_id)
 
     content = fetch_expo_json(expo_id)
+    if content is NOT_FOUND:
+        mark_unavailable(sb, expo_id)
+        return
     if not content:
         return
 
