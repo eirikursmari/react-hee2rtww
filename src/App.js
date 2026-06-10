@@ -5,7 +5,6 @@ import "./style.css";
 const RC_SEARCH_URL  = "https://www.researchcatalogue.net/portal/search-result";
 const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
 const CORS_PROXY     = "https://corsproxy.io/?";
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 
 const MODELS = [
   { id: "claude-haiku-4-5-20251001", label: "Haiku",  note: "fastest · lowest cost" },
@@ -18,6 +17,12 @@ const EXPO_TEXT_MAX  = 8000;
 
 // ── Network helpers ───────────────────────────────────────────────────────────
 
+// All edge functions live next to each other; derive a sibling function's URL
+// from the configured semantic search URL.
+function siblingFnUrl(semanticUrl, name) {
+  return semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/" + name);
+}
+
 function isCorsError(e) {
   return ["Failed to fetch", "NetworkError", "Load failed", "Network request failed"]
     .some(msg => e.message.includes(msg));
@@ -28,7 +33,11 @@ async function proxiedFetch(url) {
     return await fetch(url);
   } catch (e) {
     if (!isCorsError(e)) throw e;
-    return fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+    const semanticUrl = localStorage.getItem("rc_semantic_url") || "";
+    const proxied = semanticUrl
+      ? `${siblingFnUrl(semanticUrl, "rc-proxy")}?url=${encodeURIComponent(url)}`
+      : `${CORS_PROXY}${encodeURIComponent(url)}`;
+    return fetch(proxied);
   }
 }
 
@@ -155,18 +164,21 @@ function buildContext(expositions, contentMap = {}) {
 }
 
 // ── Claude calls ──────────────────────────────────────────────────────────────
+// Routed through the `claude` edge function — the Anthropic key lives
+// server-side; the client only sends the shared access passphrase.
 
-async function claudePost(body, apiKey, onRetry) {
+async function claudePost(body, auth, onRetry) {
+  if (!auth.semanticUrl) {
+    throw new Error("API URL not set — open ⚙ settings and enter the Supabase edge function URL.");
+  }
   const RETRIES = 3;
   const DELAYS  = [3000, 6000, 12000];
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
-    const res = await fetch(CLAUDE_API_URL, {
+    const res = await fetch(siblingFnUrl(auth.semanticUrl, "claude"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
+        "x-app-key": auth.appKey,
       },
       body: JSON.stringify(body),
     });
@@ -185,7 +197,7 @@ async function claudePost(body, apiKey, onRetry) {
   }
 }
 
-async function generateRAGAnswer(apiKey, query, context, isSemantic, modelId, onRetry) {
+async function generateRAGAnswer(auth, query, context, isSemantic, modelId, onRetry) {
   const data = await claudePost({
     model: modelId,
     max_tokens: 4096,
@@ -196,12 +208,12 @@ When answering, cite retrieved expositions by their bracket number [N]. Be conci
       role: "user",
       content: `Query: "${query}"\n\nRetrieved expositions:\n\n${context}\n\nAnswer the query based on these expositions, citing them by [number].`,
     }],
-  }, apiKey, onRetry);
+  }, auth, onRetry);
   return data.content?.[0]?.text ?? "";
 }
 
 // Conversational query — history is [{q, a}, ...], systemCtx is the full exposition content
-async function callClaudeConversation(apiKey, systemCtx, history, question, modelId, onRetry) {
+async function callClaudeConversation(auth, systemCtx, history, question, modelId, onRetry) {
   const messages = [
     ...history.flatMap(({ q, a }) => [
       { role: "user",      content: q },
@@ -214,7 +226,7 @@ async function callClaudeConversation(apiKey, systemCtx, history, question, mode
     max_tokens: 4096,
     system: `You are a research assistant with access to the full text of selected expositions from the Research Catalogue (researchcatalogue.net). Answer questions about these specific works in detail, citing each exposition by its bracket number [N]. Be thorough and analytical — the full content is available to you. This is a conversation, so build on your previous answers when relevant.\n\nExposition content:\n\n${systemCtx}`,
     messages,
-  }, apiKey, onRetry);
+  }, auth, onRetry);
   return data.content?.[0]?.text ?? "";
 }
 
@@ -382,7 +394,7 @@ const FILTER_OPTIONS = [
 
 export default function App() {
   const [query,       setQuery]       = useState("");
-  const [apiKey,      setApiKey]      = useState(() => localStorage.getItem("rc_claude_key")    || "");
+  const [appKey,      setAppKey]      = useState(() => localStorage.getItem("rc_app_key")       || "");
   const [semanticUrl, setSemanticUrl] = useState(() => localStorage.getItem("rc_semantic_url")  || "");
   const [showSettings,setShowSettings]= useState(false);
   const [deepSearch,       setDeepSearch]       = useState(() => localStorage.getItem("rc_deep_search") === "1");
@@ -426,7 +438,7 @@ export default function App() {
   const [schemaResult,        setSchemaResult]        = useState(null);
   const [schemaError,         setSchemaError]         = useState("");
   const schemaFileRef = useRef(null);
-  const [showApiKey,  setShowApiKey]  = useState(false);
+  const [showAppKey,  setShowAppKey]  = useState(false);
 
   // External classifiers
   const [classifiers,       setClassifiers]       = useState(() => { try { return JSON.parse(localStorage.getItem("rc_classifiers") || "[]"); } catch { return []; } });
@@ -527,10 +539,9 @@ export default function App() {
     if (!semanticUrl) return;
     setClassifiersSaving(true);
     try {
-      const builderUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/schema-builder");
-      const res = await fetch(builderUrl, {
+      const res = await fetch(siblingFnUrl(semanticUrl, "schema-builder"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-anthropic-key": apiKey },
+        headers: { "Content-Type": "application/json", "x-app-key": appKey },
         body: JSON.stringify({ action: "save-config", key: "classifier_config", value: updated }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
@@ -602,17 +613,16 @@ export default function App() {
 
   async function runAnalysis(e) {
     e.preventDefault();
-    if (!analyticsQ.trim() || !apiKey || !semanticUrl) return;
+    if (!analyticsQ.trim() || !appKey || !semanticUrl) return;
     setAnalyticsLoading(true);
     setAnalyticsError("");
     const currentQ = analyticsQ;
     setAnalyticsQ("");
     try {
-      const analyticsUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/analytics");
-      const res = await fetch(analyticsUrl, {
+      const res = await fetch(siblingFnUrl(semanticUrl, "analytics"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: currentQ, anthropicKey: apiKey, model: modelId, history: analyticsConversation }),
+        headers: { "Content-Type": "application/json", "x-app-key": appKey },
+        body: JSON.stringify({ question: currentQ, model: modelId, history: analyticsConversation }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -747,10 +757,9 @@ export default function App() {
       try {
         const raw     = e.target.result;
         const content = isPdf ? raw.split(",")[1] : raw;
-        const builderUrl = semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "").replace(/\/[^/]+$/, "/schema-builder");
-        const res = await fetch(builderUrl, {
+        const res = await fetch(siblingFnUrl(semanticUrl, "schema-builder"), {
           method:  "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-app-key": appKey },
           body: JSON.stringify({ document: { type: isPdf ? "pdf" : "text", content }, filename: schemaDoc.name }),
         });
         if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
@@ -821,8 +830,8 @@ export default function App() {
     setLoadingMsg("");
 
     if (results.length === 0) return;
-    if (!apiKey) {
-      setAnswerError("No API key set — open ⚙ settings and enter your Anthropic API key to get AI-generated answers.");
+    if (!appKey || !semanticUrl) {
+      setAnswerError("Open ⚙ settings and enter the API URL and access passphrase to get AI-generated answers.");
       return;
     }
 
@@ -848,7 +857,7 @@ export default function App() {
       }
 
       setLoadingMsg("Generating answer…");
-      const ans = await generateRAGAnswer(apiKey, q, context, semantic, modelId,
+      const ans = await generateRAGAnswer({ semanticUrl, appKey }, q, context, semantic, modelId,
         (attempt, total, waitMs) =>
           setLoadingMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`));
       setAnswer(ans);
@@ -858,13 +867,13 @@ export default function App() {
       setAnswerLoading(false);
       setLoadingMsg("");
     }
-  }, [apiKey, semanticUrl, useSemanticSearch, deepSearch, resultLimit, modelId, filters, customCats, activeCustomCatIds]);
+  }, [appKey, semanticUrl, useSemanticSearch, deepSearch, resultLimit, modelId, filters, customCats, activeCustomCatIds]);
 
   const queryExpositions = useCallback(async (e) => {
     e.preventDefault();
     if (!expoQuery.trim() || selectedIds.size === 0) return;
-    if (!apiKey) {
-      setExpoError("No API key set — open ⚙ settings and enter your Anthropic API key.");
+    if (!appKey || !semanticUrl) {
+      setExpoError("Open ⚙ settings and enter the API URL and access passphrase.");
       return;
     }
 
@@ -913,7 +922,7 @@ export default function App() {
     setExpoMsg("Querying Claude…");
     try {
       const ans = await callClaudeConversation(
-        apiKey, systemCtx, currentHistory, currentQuestion, modelId,
+        { semanticUrl, appKey }, systemCtx, currentHistory, currentQuestion, modelId,
         (attempt, total, waitMs) =>
           setExpoMsg(`API busy — retrying (${attempt}/${total}) in ${waitMs / 1000}s…`),
       );
@@ -925,7 +934,7 @@ export default function App() {
       setExpoLoading(false);
       setExpoMsg("");
     }
-  }, [apiKey, expoQuery, expoConversation, expoSystemCtx, expoCtxIds, expositions, selectedIds, modelId]);
+  }, [appKey, semanticUrl, expoQuery, expoConversation, expoSystemCtx, expoCtxIds, expositions, selectedIds, modelId]);
 
   const handleSubmit = (e) => { e.preventDefault(); runSearch(query); };
 
@@ -963,15 +972,15 @@ export default function App() {
             </div>
             <div className="settings-modal-body">
               <label className="settings-label">
-                Anthropic API Key <span className="settings-hint">(enables AI-generated answers)</span>
+                Access Passphrase <span className="settings-hint">(shared key — enables AI-generated answers)</span>
               </label>
               <div className="settings-input-wrap">
-                <input className="settings-input settings-input-key" type={showApiKey ? "text" : "password"} value={apiKey}
-                  onChange={e => save("key", setApiKey, "rc_claude_key")(e.target.value)}
-                  placeholder="sk-ant-api03-…" spellCheck={false} autoComplete="off" />
-                <button className="settings-reveal" onClick={() => setShowApiKey(s => !s)}
-                  title={showApiKey ? "Hide key" : "Show key"}>
-                  {showApiKey ? "Hide" : "Show"}
+                <input className="settings-input settings-input-key" type={showAppKey ? "text" : "password"} value={appKey}
+                  onChange={e => save("key", setAppKey, "rc_app_key")(e.target.value)}
+                  placeholder="passphrase" spellCheck={false} autoComplete="off" />
+                <button className="settings-reveal" onClick={() => setShowAppKey(s => !s)}
+                  title={showAppKey ? "Hide passphrase" : "Show passphrase"}>
+                  {showAppKey ? "Hide" : "Show"}
                 </button>
               </div>
 
@@ -1464,7 +1473,7 @@ export default function App() {
                   ))}
                 </div>
                 <button className="analytics-submit-btn" type="submit"
-                  disabled={analyticsLoading || !analyticsQ.trim() || !apiKey}>
+                  disabled={analyticsLoading || !analyticsQ.trim() || !appKey}>
                   {analyticsLoading ? "Analysing…" : "Analyse"}
                 </button>
               </div>

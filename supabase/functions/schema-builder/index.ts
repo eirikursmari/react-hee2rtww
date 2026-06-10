@@ -4,14 +4,14 @@
 //
 // Secrets required (Supabase dashboard → Edge Functions → Secrets):
 //   ANTHROPIC_API_KEY
-//   OPENAI_API_KEY        (injected automatically)
+//   APP_PASSPHRASE        shared passphrase users enter once in app settings
 //   SUPABASE_URL          (injected automatically)
 //   SUPABASE_SERVICE_ROLE_KEY (injected automatically)
 
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-app-key",
   "Access-Control-Max-Age":       "86400",
 };
 
@@ -90,6 +90,15 @@ Deno.serve(async (req) => {
     return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
   }
 
+  // All POST actions (config writes, schema generation) require the passphrase
+  const expected = Deno.env.get("APP_PASSPHRASE");
+  if (!expected) {
+    return Response.json({ error: "APP_PASSPHRASE secret not set in this edge function" }, { status: 500, headers: CORS });
+  }
+  if (req.headers.get("x-app-key") !== expected) {
+    return Response.json({ error: "Unauthorized — check the access passphrase in ⚙ settings" }, { status: 401, headers: CORS });
+  }
+
   let body: any;
   try { body = await req.json(); } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
@@ -97,10 +106,6 @@ Deno.serve(async (req) => {
 
   // Generic config write — used by the app to save any key/value to pipeline_config
   if (body?.action === "save-config") {
-    const authKey = req.headers.get("x-anthropic-key") ?? "";
-    if (!authKey.startsWith("sk-ant-")) {
-      return Response.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
-    }
     const { key, value } = body as { key: string; value: unknown };
     if (!key || value === undefined) {
       return Response.json({ error: "key and value required" }, { status: 400, headers: CORS });

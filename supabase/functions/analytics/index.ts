@@ -1,11 +1,15 @@
 // Supabase Edge Function — Corpus Analytics
 // Fetches all exposition metadata, computes aggregated statistics,
 // then asks Claude to interpret them in response to a natural-language question.
+//
+// Secrets required (Supabase dashboard → Edge Functions → Secrets):
+//   ANTHROPIC_API_KEY   the shared Anthropic key
+//   APP_PASSPHRASE      shared passphrase users enter once in app settings
 
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-app-key",
   "Access-Control-Max-Age":       "86400",
 };
 
@@ -113,15 +117,26 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
 
-  let question: string, anthropicKey: string, model: string,
-      history: { q: string; a: string }[];
+  const expected = Deno.env.get("APP_PASSPHRASE");
+  if (!expected) {
+    return Response.json({ error: "APP_PASSPHRASE secret not set in this edge function" }, { status: 500, headers: CORS });
+  }
+  if (req.headers.get("x-app-key") !== expected) {
+    return Response.json({ error: "Unauthorized — check the access passphrase in ⚙ settings" }, { status: 401, headers: CORS });
+  }
+
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!anthropicKey) {
+    return Response.json({ error: "ANTHROPIC_API_KEY secret not set in this edge function" }, { status: 500, headers: CORS });
+  }
+
+  let question: string, model: string, history: { q: string; a: string }[];
   try {
-    ({ question, anthropicKey, model = "claude-sonnet-4-6", history = [] } = await req.json());
+    ({ question, model = "claude-sonnet-4-6", history = [] } = await req.json());
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
   }
-  if (!question?.trim())     return Response.json({ error: "question is required"     }, { status: 400, headers: CORS });
-  if (!anthropicKey?.trim()) return Response.json({ error: "anthropicKey is required" }, { status: 400, headers: CORS });
+  if (!question?.trim()) return Response.json({ error: "question is required" }, { status: 400, headers: CORS });
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const KEY          = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
