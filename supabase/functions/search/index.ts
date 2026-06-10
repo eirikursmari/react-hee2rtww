@@ -122,36 +122,48 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. Apply custom semantic categories (each adds one embedding + vector search)
+    // 5. Blend custom semantic category scores into query similarity.
+    // Each active category contributes equally to half the final score;
+    // the query keeps the other half. Missing category scores default to 0
+    // so results always exist — adding categories re-ranks rather than filters.
     if (hasCustomCats && best.size > 0) {
-      for (const cat of activeCustomCats) {
+      const catScoreMaps = await Promise.all(activeCustomCats.map(async (cat) => {
         const catEmbRes = await fetch("https://api.openai.com/v1/embeddings", {
           method:  "POST",
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + Deno.env.get("OPENAI_API_KEY") },
           body: JSON.stringify({ model: "text-embedding-3-small", input: cat.description.trim() }),
         });
-        if (!catEmbRes.ok) continue;
+        if (!catEmbRes.ok) return null;
         const catEmb = (await catEmbRes.json()).data[0].embedding;
 
-        const catRes = await fetch(
-          SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks",
-          {
-            method:  "POST",
-            headers: sbHeaders,
-            body: JSON.stringify({ query_embedding: catEmb, match_count: 500, match_threshold: 0.15 }),
-          }
-        );
-        if (!catRes.ok) continue;
-        const catIds = new Set((await catRes.json()).map((r: any) => r.exposition_id));
+        const catRes = await fetch(SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks", {
+          method:  "POST",
+          headers: sbHeaders,
+          body: JSON.stringify({ query_embedding: catEmb, match_count: 2000, match_threshold: 0.1 }),
+        });
+        if (!catRes.ok) return null;
 
-        for (const expoId of [...best.keys()]) {
-          if (!catIds.has(expoId)) best.delete(expoId);
+        const scoreMap = new Map<number, number>();
+        for (const r of await catRes.json()) {
+          const prev = scoreMap.get(r.exposition_id) ?? 0;
+          if (r.similarity > prev) scoreMap.set(r.exposition_id, r.similarity);
+        }
+        return scoreMap;
+      }));
+
+      const validMaps = catScoreMaps.filter((m): m is Map<number, number> => m !== null);
+      if (validMaps.length > 0) {
+        const queryWeight = 0.5;
+        const catWeight   = 0.5 / validMaps.length;
+        for (const [expoId, row] of best.entries()) {
+          const catScore = validMaps.reduce((sum, map) => sum + (map.get(expoId) ?? 0), 0);
+          row.blendedScore = queryWeight * row.similarity + catWeight * catScore;
         }
       }
     }
 
     const results = [...best.values()]
-      .sort((a, b) => b.similarity - a.similarity)
+      .sort((a, b) => (b.blendedScore ?? b.similarity) - (a.blendedScore ?? a.similarity))
       .slice(0, limit)
       .map((r) => ({
         id:          r.exposition_id,
@@ -161,7 +173,7 @@ Deno.serve(async (req) => {
         keywords:    r.keywords ?? [],
         created:     r.created_at,
         url:         r.url,
-        similarity:  Math.round(r.similarity * 1000) / 1000,
+        similarity:  Math.round((r.blendedScore ?? r.similarity) * 1000) / 1000,
         matchedText: r.text,
       }));
 
