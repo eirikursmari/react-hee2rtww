@@ -44,7 +44,8 @@ FACET_KEYS = [
 
 COLUMNS = [
     "rc_id", "source_language", "text_words", "facet", "term_id", "term",
-    "confidence", "low_confidence", "kind", "evidence", "extractor_notes",
+    "confidence", "low_confidence", "kind", "modality_source", "media_ref",
+    "evidence", "extractor_notes",
 ]
 
 
@@ -80,11 +81,13 @@ def rows_for_record(rec: dict):
         yield {
             "rc_id": rc_id, "source_language": lang_str, "text_words": text_words,
             "facet": "", "term_id": "", "term": "", "confidence": "",
-            "low_confidence": "", "kind": "parse_error", "evidence": "",
+            "low_confidence": "", "kind": "parse_error",
+            "modality_source": "", "media_ref": "", "evidence": "",
             "extractor_notes": (rec.get("raw_response", "") or "")[:500],
         }
         return
 
+    # Text-run records have no modality_source on entries — back-fill to "text".
     facets = rec.get("facets") or {}
     for facet in FACET_KEYS:
         for entry in facets.get(facet, []) or []:
@@ -92,17 +95,19 @@ def rows_for_record(rec: dict):
                 continue
             conf = entry.get("confidence", "")
             yield {
-                "rc_id": rc_id,
-                "source_language": lang_str,
-                "text_words": text_words,
-                "facet": facet,
-                "term_id": entry.get("id", "") or "",
-                "term": term_text(entry),
-                "confidence": conf if conf != "" else "",
-                "low_confidence": low_conf(conf),
-                "kind": "controlled",
-                "evidence": (entry.get("evidence", "") or "").strip(),
-                "extractor_notes": notes,
+                "rc_id":            rc_id,
+                "source_language":  lang_str,
+                "text_words":       text_words,
+                "facet":            facet,
+                "term_id":          entry.get("id", "") or "",
+                "term":             term_text(entry),
+                "confidence":       conf if conf != "" else "",
+                "low_confidence":   low_conf(conf),
+                "kind":             "controlled",
+                "modality_source":  entry.get("modality_source", "text"),
+                "media_ref":        entry.get("media_ref", "") or "",
+                "evidence":         (entry.get("evidence", "") or "").strip(),
+                "extractor_notes":  notes,
             }
 
     # Inductive overflow channel — no id, no confidence in the schema.
@@ -110,17 +115,19 @@ def rows_for_record(rec: dict):
         if not isinstance(entry, dict):
             continue
         yield {
-            "rc_id": rc_id,
-            "source_language": lang_str,
-            "text_words": text_words,
-            "facet": entry.get("facet", "") or "",
-            "term_id": "",
-            "term": term_text(entry),
-            "confidence": "",
-            "low_confidence": "",
-            "kind": "uncontrolled",
-            "evidence": (entry.get("evidence", "") or "").strip(),
-            "extractor_notes": notes,
+            "rc_id":            rc_id,
+            "source_language":  lang_str,
+            "text_words":       text_words,
+            "facet":            entry.get("facet", "") or "",
+            "term_id":          "",
+            "term":             term_text(entry),
+            "confidence":       "",
+            "low_confidence":   "",
+            "kind":             "uncontrolled",
+            "modality_source":  entry.get("modality_source", "text"),
+            "media_ref":        entry.get("media_ref", "") or "",
+            "evidence":         (entry.get("evidence", "") or "").strip(),
+            "extractor_notes":  notes,
         }
 
 
