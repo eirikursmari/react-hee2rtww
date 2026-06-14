@@ -307,7 +307,7 @@ def call_claude(
 ) -> tuple[dict, dict]:
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_blocks,
         messages=[{"role": "user", "content": user_text}],
     )
