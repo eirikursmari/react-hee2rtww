@@ -307,10 +307,9 @@ def call_claude(
 ) -> tuple[dict, dict]:
     response = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=4096,
         system=system_blocks,
         messages=[{"role": "user", "content": user_text}],
-        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     )
 
     raw = response.content[0].text.strip()
