@@ -354,14 +354,18 @@ def run_loop(items, get_meta_and_content, client, system_blocks, model,
                 skipped += 1
                 continue
 
-            log.info("[%d/%d] %s — %s", i, n, expo_id,
-                     str(meta.get("title", ""))[:55])
+            body_source = content if content is not None else meta
+            text_words = len(extract_text(body_source).split())
+
+            log.info("[%d/%d] %s — %s  (%d words)", i, n, expo_id,
+                     str(meta.get("title", ""))[:55], text_words)
 
             user_text = build_user_message(meta, content)
 
             try:
                 result, usage = call_claude(client, system_blocks, user_text, model)
                 result.setdefault("rc_id", expo_id)
+                result["_text_words"] = text_words
                 result["_usage"] = usage
 
                 out_f.write(json.dumps(result, ensure_ascii=False) + "\n")

@@ -43,7 +43,7 @@ FACET_KEYS = [
 ]
 
 COLUMNS = [
-    "rc_id", "source_language", "facet", "term_id", "term",
+    "rc_id", "source_language", "text_words", "facet", "term_id", "term",
     "confidence", "low_confidence", "kind", "evidence", "extractor_notes",
 ]
 
@@ -71,15 +71,16 @@ def rows_for_record(rec: dict):
     if isinstance(langs, str):
         langs = [langs]
     lang_str = ";".join(str(l) for l in langs) if langs else ""
+    text_words = rec.get("_text_words", "")
     notes = rec.get("extractor_notes", "") or ""
 
     # Records the extractor could not parse as JSON are carried through so the
     # reviewer still sees them — surface them as a single explicit row.
     if rec.get("parse_error"):
         yield {
-            "rc_id": rc_id, "source_language": lang_str, "facet": "",
-            "term_id": "", "term": "", "confidence": "", "low_confidence": "",
-            "kind": "parse_error", "evidence": "",
+            "rc_id": rc_id, "source_language": lang_str, "text_words": text_words,
+            "facet": "", "term_id": "", "term": "", "confidence": "",
+            "low_confidence": "", "kind": "parse_error", "evidence": "",
             "extractor_notes": (rec.get("raw_response", "") or "")[:500],
         }
         return
@@ -93,6 +94,7 @@ def rows_for_record(rec: dict):
             yield {
                 "rc_id": rc_id,
                 "source_language": lang_str,
+                "text_words": text_words,
                 "facet": facet,
                 "term_id": entry.get("id", "") or "",
                 "term": term_text(entry),
@@ -110,6 +112,7 @@ def rows_for_record(rec: dict):
         yield {
             "rc_id": rc_id,
             "source_language": lang_str,
+            "text_words": text_words,
             "facet": entry.get("facet", "") or "",
             "term_id": "",
             "term": term_text(entry),
