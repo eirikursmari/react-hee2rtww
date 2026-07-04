@@ -33,11 +33,22 @@ it would wrongly and permanently write off an exposition that's actually fine.
 
 ## Vercel deployment is disabled on purpose
 
-`vercel.json`'s `ignoreCommand` unconditionally echoes and exits, so Vercel never builds this repo
-even if a Vercel project is still wired to it. `api/search.js` is kept only because it duplicates
+`vercel.json` sets `git.deploymentEnabled: false` so Vercel never builds this repo even if a
+Vercel project is still wired to it. `api/search.js` is kept only because it duplicates
 `supabase/functions/search` logic for that dormant path — it is not the canonical backend and
 changes to `supabase/functions/search` do not need to be mirrored there unless someone explicitly
 revives the Vercel deployment.
+
+## 2026-07-04 — ignoreCommand didn't actually stop Vercel builds
+
+The original approach (`"ignoreCommand": "echo '...'"`, exit code 0) still let Vercel spin up a
+build container that failed on an unrelated Node.js engines check (`package.json` pinned
+`"18.x"`, which Vercel has since discontinued) before ever acting on the ignore signal — so the
+build still ran and errored instead of being skipped. Switched to `git.deploymentEnabled: false`,
+which stops the deployment from being created at all rather than conditionally canceling one
+mid-build. If Vercel deployments ever need reviving, don't reach for `ignoreCommand` again without
+first checking whether a preflight check (engines, framework detection) can still fire before it's
+evaluated.
 
 ## `rc-proxy`'s allowlist is narrow by design
 

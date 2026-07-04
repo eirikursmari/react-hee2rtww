@@ -29,6 +29,10 @@ _Last updated: 2026-07-04_
 
 ## Recent work (most recent first)
 
+- Fixed Vercel preview builds failing on every push: replaced the non-working
+  `ignoreCommand` echo trick with `git.deploymentEnabled: false` in `vercel.json`, which actually
+  stops the deployment from being created (see `memory.md` for why the old approach didn't work).
+- Added `state.md` and `memory.md` for cross-session project context.
 - Added `CLAUDE.md` documenting architecture and dev workflows.
 - Added fetch mode to `rc_extract.py` (no local JSON files needed) and the faceted extraction
   schema doc (`schema/artistic-research-extraction-schema.md`).
@@ -51,7 +55,7 @@ changes.
 - Supabase edge functions: deployed independently via Supabase CLI — **not** part of this repo's
   CI. Verify a function is actually redeployed after editing its `index.ts`.
 - Vercel path (`api/search.js`, `vercel.json`) is intentionally disabled
-  (`ignoreCommand` in `vercel.json`) — treat as a legacy fallback, not the live deployment.
+  (`git.deploymentEnabled: false` in `vercel.json`) — treat as a legacy fallback, not the live deployment.
 
 ## How to keep this file useful
 

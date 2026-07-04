@@ -22,7 +22,7 @@ there is no shared build or shared types:
 
 `api/search.js` is a legacy/alternate Vercel serverless function duplicating the `supabase/functions/search`
 logic, kept for the Vercel deployment path referenced in `vercel.json` (deployment via Vercel is otherwise
-disabled — see `vercel.json`'s `ignoreCommand`). The canonical deployment is GitHub Pages + Supabase edge
+disabled — see `vercel.json`'s `git.deploymentEnabled: false`). The canonical deployment is GitHub Pages + Supabase edge
 functions.
 
 ## Commands

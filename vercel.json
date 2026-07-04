@@ -1,5 +1,7 @@
 {
-  "ignoreCommand": "echo 'Deployment disabled: app runs on GitHub Pages + Supabase'",
+  "git": {
+    "deploymentEnabled": false
+  },
   "functions": {
     "api/search.js": {
       "maxDuration": 30
