@@ -299,7 +299,8 @@ def empty_facets() -> dict:
 
 # ── I/O helpers ────────────────────────────────────────────────────────────────
 
-def load_inventory(path: Path, sample: Optional[int], seed: int) -> list[dict]:
+def load_inventory(path: Path) -> list[dict]:
+    """All image-bearing expositions from the inventory (no sampling here)."""
     records = []
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -312,10 +313,25 @@ def load_inventory(path: Path, sample: Optional[int], seed: int) -> list[dict]:
                     records.append(rec)
             except Exception:
                 pass
-    if sample and sample < len(records):
-        rng = random.Random(seed)
-        records = rng.sample(records, sample)
     return records
+
+
+def load_text_words(path: Path) -> dict[str, int]:
+    """rc_id -> _text_words from a text run (for rescue targeting)."""
+    words: dict[str, int] = {}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rc_id = str(rec.get("rc_id") or "")
+            if rc_id and rec.get("_text_words") is not None:
+                words[rc_id] = rec["_text_words"]
+    return words
 
 
 def load_done(path: Path) -> set[str]:
@@ -340,8 +356,11 @@ def main() -> None:
         description="RC multimodal (image) faceted extraction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Micro-pilot (recommended first run):\n"
+            "Micro-pilot (random sample):\n"
             "  rc_multimodal.py output/inventory.jsonl output/multimodal.jsonl --sample 10\n\n"
+            "Rescue mode (target the text-thinnest expositions that have images):\n"
+            "  rc_multimodal.py output/inventory.jsonl output/multimodal.jsonl \\\n"
+            "      --text-run output/pilot.jsonl --rescue --max-text-words 50 --sample 30\n\n"
             "Full pass:\n"
             "  rc_multimodal.py output/inventory.jsonl output/multimodal.jsonl\n"
         ),
@@ -349,7 +368,16 @@ def main() -> None:
     ap.add_argument("inventory_jsonl", help="Inventory JSONL from rc_inventory.py")
     ap.add_argument("output_jsonl",    help="Output JSONL (appended; resumable)")
     ap.add_argument("--sample", type=int, metavar="N",
-                    help="Limit to N expositions (micro-pilot)")
+                    help="Limit to N expositions (micro-pilot / rescue cap)")
+    ap.add_argument("--text-run", metavar="PATH",
+                    help="Text run JSONL (rc_extract.py output) with _text_words, "
+                         "for rescue targeting")
+    ap.add_argument("--rescue", action="store_true",
+                    help="Select the text-thinnest image-bearing expositions "
+                         "(requires --text-run)")
+    ap.add_argument("--max-text-words", type=int, default=50, metavar="N",
+                    help="Rescue: only expositions with fewer than N text words "
+                         "(default 50)")
     ap.add_argument("--seed",        type=int,   default=42)
     ap.add_argument("--max-images",  type=int,   default=DEFAULT_MAX_IMGS,
                     help=f"Max images per exposition (default {DEFAULT_MAX_IMGS})")
@@ -380,12 +408,37 @@ def main() -> None:
     }]
     log.info("Schemas loaded: %d chars", len(schema_text))
 
-    records = load_inventory(Path(args.inventory_jsonl), args.sample, args.seed)
+    if args.rescue and not args.text_run:
+        log.error("--rescue requires --text-run"); sys.exit(1)
+
+    records = load_inventory(Path(args.inventory_jsonl))
+    log.info("%d image-bearing expositions in inventory", len(records))
+
+    # ── Rescue targeting: keep the text-thinnest, thinnest first ────────────────
+    if args.rescue:
+        words = load_text_words(Path(args.text_run))
+        thin, unknown = [], 0
+        for r in records:
+            w = words.get(str(r["rc_id"]))
+            if w is None:
+                unknown += 1
+            elif w < args.max_text_words:
+                thin.append((w, r))
+        thin.sort(key=lambda x: x[0])          # thinnest first
+        records = [r for _, r in thin]
+        log.info("Rescue: %d text-thin (<%d words) of image-bearing; "
+                 "%d had no word count (run backfill_wordcount.py)",
+                 len(records), args.max_text_words, unknown)
+        if args.sample:
+            records = records[:args.sample]    # already sorted thinnest-first
+    elif args.sample and args.sample < len(records):
+        rng = random.Random(args.seed)
+        records = rng.sample(records, args.sample)
+
     done    = load_done(Path(args.output_jsonl))
     pending = [r for r in records if str(r["rc_id"]) not in done]
 
-    log.info("%d expositions with fetchable images; %d pending",
-             len(records), len(pending))
+    log.info("%d expositions selected; %d pending", len(records), len(pending))
 
     client  = anthropic.Anthropic(api_key=api_key)
 
