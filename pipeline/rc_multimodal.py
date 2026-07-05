@@ -31,6 +31,7 @@ Environment variables
 
 import argparse
 import base64
+import html
 import json
 import logging
 import os
@@ -106,6 +107,64 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+
+# ── Live media harvesting ──────────────────────────────────────────────────────
+#
+# map.rcdata.org stores exposition *structure* (page ids, text) reliably, but its
+# media URLs are a 2025 snapshot with long-expired signed tokens. The live RC
+# viewer embeds freshly-signed media URLs in each page's HTML, so we harvest those
+# per page and download within the same session (cookies + fresh token → 200).
+
+RC_SNAPSHOT_URL = "https://map.rcdata.org/rcjson/expo"
+RC_VIEW_URL     = "https://www.researchcatalogue.net/view"
+RC_REFERER      = "https://www.researchcatalogue.net/"
+BROWSER_UA      = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+IMG_EXTS        = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+MAX_PAGES_SCAN  = 15   # stop harvesting after this many pages even if under cap
+MEDIA_URL_RE    = re.compile(r'https://media\.researchcatalogue\.net/[^\s"\'<>)]+')
+HASH_RE         = re.compile(r'/([0-9a-f]{32})')
+
+
+def fetch_page_ids(expo_id: str, session: req_lib.Session) -> list[str]:
+    """Page ids from the snapshot (structure is valid; only its media is stale)."""
+    try:
+        r = session.get(f"{RC_SNAPSHOT_URL}/{expo_id}", timeout=30)
+        r.raise_for_status()
+        pages = r.json().get("pages", {})
+        return list(pages.keys()) if isinstance(pages, dict) else []
+    except (req_lib.RequestException, ValueError) as exc:
+        log.warning("    page-id fetch failed for %s: %s", expo_id, exc)
+        return []
+
+
+def harvest_image_urls(expo_id: str, page_ids: list[str],
+                       session: req_lib.Session, max_images: int) -> list[dict]:
+    """Fetch each live page and collect fresh-token image URLs, deduped by hash."""
+    seen: set[str] = set()
+    urls: list[dict] = []
+    for pid in page_ids[:MAX_PAGES_SCAN]:
+        if len(urls) >= max_images:
+            break
+        try:
+            r = session.get(f"{RC_VIEW_URL}/{expo_id}/{pid}", timeout=20)
+            if r.status_code != 200:
+                continue
+        except req_lib.RequestException:
+            continue
+        for u in MEDIA_URL_RE.findall(html.unescape(r.text)):
+            if not u.split("?")[0].lower().endswith(IMG_EXTS):
+                continue
+            m = HASH_RE.search(u)
+            key = m.group(1) if m else u.split("?")[0]
+            if key in seen:
+                continue
+            seen.add(key)
+            urls.append({"media_id": key[:16], "url": u})
+            if len(urls) >= max_images:
+                break
+    return urls
 
 
 # ── Image fetching ─────────────────────────────────────────────────────────────
@@ -249,7 +308,7 @@ def load_inventory(path: Path, sample: Optional[int], seed: int) -> list[dict]:
                 continue
             try:
                 rec = json.loads(line)
-                if rec.get("fetchable_images", 0) > 0:
+                if rec.get("media_counts", {}).get("image", 0) > 0:
                     records.append(rec)
             except Exception:
                 pass
@@ -329,8 +388,14 @@ def main() -> None:
              len(records), len(pending))
 
     client  = anthropic.Anthropic(api_key=api_key)
+
+    # Browser-like session for the live RC viewer + media CDN (fresh tokens).
     session = req_lib.Session()
-    session.headers["User-Agent"] = "rc-multimodal/1.0"
+    session.headers.update({"User-Agent": BROWSER_UA, "Referer": RC_REFERER})
+
+    # Plain session for the map.rcdata.org structure snapshot (page ids only).
+    snapshot_session = req_lib.Session()
+    snapshot_session.headers["User-Agent"] = "rc-multimodal/1.0"
 
     out_path = Path(args.output_jsonl)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,12 +411,10 @@ def main() -> None:
             title = inv.get("title", "") or ""
             log.info("[%d/%d] %s — %s", i, n, rc_id, title[:55])
 
-            candidates = [
-                b for b in inv.get("media_inventory", [])
-                if b["media_type"] == "image"
-                and b["url_status"] == "rc_hosted"
-                and b.get("url")
-            ][: args.max_images]
+            page_ids   = fetch_page_ids(rc_id, snapshot_session)
+            candidates = harvest_image_urls(rc_id, page_ids, session, args.max_images)
+            log.info("    harvested %d fresh image URLs from %d pages",
+                     len(candidates), len(page_ids))
 
             image_descs:     list[dict] = []
             merged_facets    = empty_facets()
