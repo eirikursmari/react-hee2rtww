@@ -166,8 +166,22 @@ BROWSER_UA      = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 IMG_EXTS        = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MAX_PAGES_SCAN  = 15   # stop harvesting after this many pages even if under cap
+VARIANT_CAP     = 1600 # Claude downscales beyond ~1568px long edge — no gain past this
 MEDIA_URL_RE    = re.compile(r'https://media\.researchcatalogue\.net/[^\s"\'<>)]+')
 HASH_RE         = re.compile(r'/([0-9a-f]{32})')
+DIMS_RE         = re.compile(r'_(\d+)x(\d+)\.(?:png|jpe?g|gif|webp)', re.IGNORECASE)
+
+
+def _variant_rank(url: str) -> tuple[int, int]:
+    """Rank a size variant: largest long-edge up to VARIANT_CAP is best; above the
+    cap prefer the smallest; unknown/original size ranks last (may be huge / >5MB)."""
+    m = DIMS_RE.search(url)
+    if not m:
+        return (0, 0)
+    long_edge = max(int(m.group(1)), int(m.group(2)))
+    if long_edge <= VARIANT_CAP:
+        return (2, long_edge)       # best tier — bigger is more legible
+    return (1, -long_edge)          # over cap — smaller is safer/cheaper
 
 
 def _get_retry(session: req_lib.Session, url: str,
@@ -205,12 +219,11 @@ def fetch_structure(expo_id: str, session: req_lib.Session) -> tuple[list[str], 
 def harvest_image_urls(expo_id: str, page_ids: list[str],
                        session: req_lib.Session, max_images: int,
                        max_pages: int = MAX_PAGES_SCAN) -> list[dict]:
-    """Fetch each live page and collect fresh-token image URLs, deduped by hash."""
-    seen: set[str] = set()
-    urls: list[dict] = []
+    """Fetch each live page, group image URLs by content hash, and keep the
+    largest useful size variant of each (up to VARIANT_CAP for legibility)."""
+    by_hash: dict[str, list[str]] = {}
+    order: list[str] = []              # first-seen order of distinct images
     for pid in page_ids[:max_pages]:
-        if len(urls) >= max_images:
-            break
         r = _get_retry(session, f"{RC_VIEW_URL}/{expo_id}/{pid}", timeout=20)
         if r is None or r.status_code != 200:
             continue
@@ -219,13 +232,20 @@ def harvest_image_urls(expo_id: str, page_ids: list[str],
                 continue
             m = HASH_RE.search(u)
             key = m.group(1) if m else u.split("?")[0]
-            if key in seen:
-                continue
-            seen.add(key)
-            urls.append({"media_id": key[:16], "url": u})
-            if len(urls) >= max_images:
-                break
-    return urls
+            if key not in by_hash:
+                by_hash[key] = []
+                order.append(key)
+            by_hash[key].append(u)
+        if len(order) >= max_images:   # enough distinct images collected
+            break
+
+    result: list[dict] = []
+    for key in order[:max_images]:
+        best = max(by_hash[key], key=_variant_rank)
+        m = DIMS_RE.search(best)
+        size = f"{m.group(1)}x{m.group(2)}" if m else "orig"
+        result.append({"media_id": key[:16], "url": best, "size": size})
+    return result
 
 
 # ── Image fetching ─────────────────────────────────────────────────────────────
@@ -652,6 +672,7 @@ def main() -> None:
                 desc_entry = {
                     "media_id":    media_id,
                     "url":         url,
+                    "size":        block.get("size", ""),
                     "media_status": "described",
                     "description": description,
                 }
