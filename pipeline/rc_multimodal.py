@@ -162,18 +162,36 @@ MEDIA_URL_RE    = re.compile(r'https://media\.researchcatalogue\.net/[^\s"\'<>)]
 HASH_RE         = re.compile(r'/([0-9a-f]{32})')
 
 
+def _get_retry(session: req_lib.Session, url: str,
+               retries: int = 3, timeout: int = 30):
+    """GET with small exponential backoff; return Response or None."""
+    for attempt in range(retries):
+        try:
+            return session.get(url, timeout=timeout)
+        except req_lib.RequestException as exc:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                log.warning("    GET failed after %d tries: %s (%s)",
+                            retries, url[:70], exc)
+    return None
+
+
 def fetch_structure(expo_id: str, session: req_lib.Session) -> tuple[list[str], str]:
     """Page ids + title from the snapshot (structure valid; only its media is stale)."""
-    try:
-        r = session.get(f"{RC_SNAPSHOT_URL}/{expo_id}", timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        pages = data.get("pages", {})
-        page_ids = list(pages.keys()) if isinstance(pages, dict) else []
-        return page_ids, (data.get("title") or "")
-    except (req_lib.RequestException, ValueError) as exc:
-        log.warning("    structure fetch failed for %s: %s", expo_id, exc)
+    r = _get_retry(session, f"{RC_SNAPSHOT_URL}/{expo_id}")
+    if r is None or r.status_code != 200:
+        log.warning("    structure fetch failed for %s (status %s)",
+                    expo_id, getattr(r, "status_code", "n/a"))
         return [], ""
+    try:
+        data = r.json()
+    except ValueError as exc:
+        log.warning("    structure JSON error for %s: %s", expo_id, exc)
+        return [], ""
+    pages = data.get("pages", {})
+    page_ids = list(pages.keys()) if isinstance(pages, dict) else []
+    return page_ids, (data.get("title") or "")
 
 
 def harvest_image_urls(expo_id: str, page_ids: list[str],
@@ -185,11 +203,8 @@ def harvest_image_urls(expo_id: str, page_ids: list[str],
     for pid in page_ids[:max_pages]:
         if len(urls) >= max_images:
             break
-        try:
-            r = session.get(f"{RC_VIEW_URL}/{expo_id}/{pid}", timeout=20)
-            if r.status_code != 200:
-                continue
-        except req_lib.RequestException:
+        r = _get_retry(session, f"{RC_VIEW_URL}/{expo_id}/{pid}", timeout=20)
+        if r is None or r.status_code != 200:
             continue
         for u in MEDIA_URL_RE.findall(html.unescape(r.text)):
             if not u.split("?")[0].lower().endswith(IMG_EXTS):
