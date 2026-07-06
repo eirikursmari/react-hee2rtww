@@ -88,10 +88,18 @@ DESCRIBE_OCR_PROMPT = (
     "(b) documentation, (c) process material, or (d) incidental. Do not speculate "
     "about meaning or method.\n\n"
     "TRANSCRIPTION:\n"
-    "Every piece of readable text in the image, transcribed VERBATIM in its "
-    "original language, in reading order. Include titles, body text, captions, "
-    "and handwriting if legible. Do not translate, summarise, or comment. If there "
-    "is no readable text, write exactly: [no text]."
+    "Transcribe ONLY text you can read clearly and with high confidence, word for "
+    "word, in its original language and reading order. You MUST obey these rules:\n"
+    "• Do NOT guess, complete, reconstruct, or infer any text that is small, "
+    "blurry, cut off, rotated, or only partially visible.\n"
+    "• Where text is present but not clearly legible, write [illegible] for that "
+    "region — never invent plausible words to fill the gap.\n"
+    "• Never end a phrase with '...' as if continuing text you cannot actually "
+    "read; that is fabrication.\n"
+    "• Do not translate, paraphrase, correct grammar, or improve wording.\n"
+    "• Omitting uncertain text is REQUIRED: a short faithful transcription is far "
+    "better than a complete-looking but partly invented one.\n"
+    "If there is no clearly readable text, write exactly: [no text]."
 )
 
 EXTRACT_PREAMBLE = (
