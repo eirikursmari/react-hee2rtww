@@ -646,6 +646,7 @@ def main() -> None:
                     images_skipped += 1
                     image_descs.append({"media_id": media_id,
                                         "url": variants[0] if variants else "",
+                                        "size": "",
                                         "media_status": "fetch_failed"})
                     continue
 
@@ -664,6 +665,7 @@ def main() -> None:
                 if not description:
                     images_skipped += 1
                     image_descs.append({"media_id": media_id, "url": url,
+                                        "size": used_size,
                                         "media_status": "describe_failed"})
                     continue
 
