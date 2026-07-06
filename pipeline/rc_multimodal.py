@@ -379,7 +379,7 @@ def call_extract_text(
     user_text = EXTRACT_TEXT_PROMPT.format(rc_id=rc_id, title=title, text=text)
     resp = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,   # aggregate transcription can yield many facets
         system=system_blocks,
         messages=[{"role": "user", "content": user_text}],
     )
@@ -743,6 +743,7 @@ def main() -> None:
 
             # ── OCR aggregate: facets from text designed into the images ────────
             image_text = "\n\n".join(ocr_chunks).strip()
+            out_image_text_raw = ""
             if args.ocr and image_text:
                 log.info("    OCR aggregate: %d words of designed-in text → facets",
                          len(image_text.split()))
@@ -756,9 +757,15 @@ def main() -> None:
                     tok["ext_out"]      += t_usage["output_tokens"]
                     tok["cache_create"] += t_usage["cache_creation_input_tokens"]
                     tok["cache_read"]   += t_usage["cache_read_input_tokens"]
-                    if not tresult.get("parse_error"):
+                    if tresult.get("parse_error"):
+                        log.warning("    image-text extract PARSE ERROR — "
+                                    "raw saved in _image_text_raw")
+                        out_image_text_raw = tresult.get("raw_response", "")
+                    else:
                         tagged = tag_provenance(tresult.get("facets", {}),
                                                 "image-text", modality="image-text")
+                        n_added = sum(len(v) for v in tagged.values()
+                                      if isinstance(v, list))
                         merged_facets = merge_facets(merged_facets, tagged)
                         for u in (tresult.get("uncontrolled_terms") or []):
                             if isinstance(u, dict):
@@ -766,6 +773,8 @@ def main() -> None:
                                     **u, "modality_source": "image-text",
                                     "media_ref": "image-text",
                                 })
+                        log.info("    image-text → %d facets from designed-in text",
+                                 n_added)
                 except anthropic.APIError as exc:
                     log.error("    image-text extract API error: %s", exc)
 
@@ -775,6 +784,7 @@ def main() -> None:
                 "exposition_type":     inv.get("exposition_type", ""),
                 "image_descriptions":  image_descs,
                 "image_text":          image_text,
+                "_image_text_raw":     out_image_text_raw,
                 "facets":              merged_facets,
                 "uncontrolled_terms":  merged_unctrl,
                 "_images_attempted":   len(candidates),
