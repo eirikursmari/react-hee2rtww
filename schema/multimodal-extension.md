@@ -9,6 +9,7 @@ Every facet assignment — old and new — gains a `modality_source` tag. Back-f
 |---|---|
 | `text` | from exposition prose (existing v0.1 pipeline) |
 | `image` | from a still image (photograph, scan, screenshot, artwork reproduction) |
+| `image-text` | from text transcribed (OCR) out of designed image elements — authored text rendered as graphics, so the full facet range applies, not the image-restraint rules |
 | `video-frame` | from a sampled still frame of a video |
 | `video-motion` | from a model's description of movement/temporal content in video |
 | `audio-speech` | from an ASR transcript of spoken audio |

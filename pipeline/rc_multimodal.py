@@ -75,11 +75,46 @@ DESCRIBE_PROMPT = (
     "(e.g. a plain colour block, a divider), say so in five words and stop."
 )
 
+# Combined describe + verbatim transcription (used when --ocr is set). Many RC
+# expositions typeset their prose *inside* designed image elements, so the text
+# extractor sees nothing — but it is authored text and must be recovered.
+DESCRIBE_OCR_PROMPT = (
+    "Exposition title: {title}\n\n"
+    "This image is from a Research Catalogue exposition where text is often part "
+    "of the visual design. Return EXACTLY two labelled sections:\n\n"
+    "DESCRIPTION:\n"
+    "A 60–120 word literal description of what is visible — subjects, setting, "
+    "medium if evident, composition, and whether the image is (a) an artwork, "
+    "(b) documentation, (c) process material, or (d) incidental. Do not speculate "
+    "about meaning or method.\n\n"
+    "TRANSCRIPTION:\n"
+    "Every piece of readable text in the image, transcribed VERBATIM in its "
+    "original language, in reading order. Include titles, body text, captions, "
+    "and handwriting if legible. Do not translate, summarise, or comment. If there "
+    "is no readable text, write exactly: [no text]."
+)
+
 EXTRACT_PREAMBLE = (
     "You are a structured metadata extractor for artistic research expositions "
     "from the Research Catalogue (researchcatalogue.net).\n\n"
     "Below is the complete faceted extraction schema (v0.1) followed by the "
     "multimodal extension rules. Read both carefully before processing."
+)
+
+# Facet extraction over text transcribed from designed image elements. Unlike a
+# single image's visual inference, this is authored text, so the full facet range
+# applies (mode/epist/theo included) — same rules as the text pipeline.
+EXTRACT_TEXT_PROMPT = (
+    "RC_ID: {rc_id}\n"
+    "TITLE: {title}\n\n"
+    "TEXT TRANSCRIBED FROM THE EXPOSITION'S DESIGNED/VISUAL ELEMENTS:\n{text}\n\n"
+    "This text was written by the researcher but rendered inside images rather "
+    "than stored as machine-readable text. Treat it as primary authored text: the "
+    "FULL facet range applies (mode, epist, theo included), exactly as for the "
+    "prose pipeline — the image-only restraint rules do NOT apply here.\n"
+    "• evidence must be a short verbatim quote from the transcribed text above.\n"
+    "• Assign only terms the text supports; empty facets are fine.\n\n"
+    "Return ONLY a valid JSON object — no prose, no markdown fences."
 )
 
 EXTRACT_PROMPT = (
@@ -127,24 +162,27 @@ MEDIA_URL_RE    = re.compile(r'https://media\.researchcatalogue\.net/[^\s"\'<>)]
 HASH_RE         = re.compile(r'/([0-9a-f]{32})')
 
 
-def fetch_page_ids(expo_id: str, session: req_lib.Session) -> list[str]:
-    """Page ids from the snapshot (structure is valid; only its media is stale)."""
+def fetch_structure(expo_id: str, session: req_lib.Session) -> tuple[list[str], str]:
+    """Page ids + title from the snapshot (structure valid; only its media is stale)."""
     try:
         r = session.get(f"{RC_SNAPSHOT_URL}/{expo_id}", timeout=30)
         r.raise_for_status()
-        pages = r.json().get("pages", {})
-        return list(pages.keys()) if isinstance(pages, dict) else []
+        data = r.json()
+        pages = data.get("pages", {})
+        page_ids = list(pages.keys()) if isinstance(pages, dict) else []
+        return page_ids, (data.get("title") or "")
     except (req_lib.RequestException, ValueError) as exc:
-        log.warning("    page-id fetch failed for %s: %s", expo_id, exc)
-        return []
+        log.warning("    structure fetch failed for %s: %s", expo_id, exc)
+        return [], ""
 
 
 def harvest_image_urls(expo_id: str, page_ids: list[str],
-                       session: req_lib.Session, max_images: int) -> list[dict]:
+                       session: req_lib.Session, max_images: int,
+                       max_pages: int = MAX_PAGES_SCAN) -> list[dict]:
     """Fetch each live page and collect fresh-token image URLs, deduped by hash."""
     seen: set[str] = set()
     urls: list[dict] = []
-    for pid in page_ids[:MAX_PAGES_SCAN]:
+    for pid in page_ids[:max_pages]:
         if len(urls) >= max_images:
             break
         try:
@@ -197,17 +235,34 @@ def fetch_image(url: str, session: req_lib.Session) -> Optional[tuple[str, str]]
 
 # ── Claude calls ───────────────────────────────────────────────────────────────
 
+def split_describe_ocr(raw: str) -> tuple[str, str]:
+    """Split a combined DESCRIPTION/TRANSCRIPTION response into (description, ocr)."""
+    m = re.search(r'TRANSCRIPTION:\s*', raw, re.IGNORECASE)
+    if not m:
+        return raw.strip(), ""
+    description = raw[:m.start()]
+    description = re.sub(r'^\s*DESCRIPTION:\s*', "", description,
+                         flags=re.IGNORECASE).strip()
+    ocr = raw[m.end():].strip()
+    if re.fullmatch(r'\[?\s*no text\s*\]?\.?', ocr, re.IGNORECASE):
+        ocr = ""
+    return description, ocr
+
+
 def call_describe(
     client: anthropic.Anthropic,
     b64: str,
     media_type: str,
     title: str,
     model: str,
-) -> tuple[Optional[str], dict]:
+    ocr: bool = False,
+) -> tuple[Optional[str], str, dict]:
+    """Return (description, ocr_text, usage). ocr_text is '' unless ocr=True."""
+    prompt = DESCRIBE_OCR_PROMPT if ocr else DESCRIBE_PROMPT
     try:
         resp = client.messages.create(
             model=model,
-            max_tokens=300,
+            max_tokens=1600 if ocr else 300,   # transcription can be long
             system=DESCRIBE_SYSTEM,
             messages=[{
                 "role": "user",
@@ -215,7 +270,7 @@ def call_describe(
                     {"type": "image",
                      "source": {"type": "base64", "media_type": media_type, "data": b64}},
                     {"type": "text",
-                     "text": DESCRIBE_PROMPT.format(title=title)},
+                     "text": prompt.format(title=title)},
                 ],
             }],
         )
@@ -223,14 +278,18 @@ def call_describe(
             "input_tokens":  resp.usage.input_tokens,
             "output_tokens": resp.usage.output_tokens,
         }
-        return resp.content[0].text.strip(), usage
+        raw = resp.content[0].text.strip()
+        if ocr:
+            description, ocr_text = split_describe_ocr(raw)
+            return description, ocr_text, usage
+        return raw, "", usage
     except anthropic.RateLimitError:
         log.warning("    rate limited (describe) — sleeping 60s")
         time.sleep(60)
-        return None, {}
+        return None, "", {}
     except anthropic.APIError as exc:
         log.warning("    describe API error: %s", exc)
-        return None, {}
+        return None, "", {}
 
 
 def call_extract(
@@ -268,9 +327,43 @@ def call_extract(
     return result, usage
 
 
+def call_extract_text(
+    client: anthropic.Anthropic,
+    system_blocks: list[dict],
+    rc_id: str,
+    title: str,
+    text: str,
+    model: str,
+) -> tuple[dict, dict]:
+    """Facet extraction over text transcribed from designed image elements."""
+    user_text = EXTRACT_TEXT_PROMPT.format(rc_id=rc_id, title=title, text=text)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=4096,
+        system=system_blocks,
+        messages=[{"role": "user", "content": user_text}],
+    )
+    raw = resp.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        result = {"parse_error": True, "raw_response": raw[:1000]}
+
+    usage = {
+        "input_tokens":                resp.usage.input_tokens,
+        "output_tokens":               resp.usage.output_tokens,
+        "cache_creation_input_tokens": getattr(resp.usage, "cache_creation_input_tokens", 0),
+        "cache_read_input_tokens":     getattr(resp.usage, "cache_read_input_tokens", 0),
+    }
+    return result, usage
+
+
 # ── Facet helpers ──────────────────────────────────────────────────────────────
 
-def tag_provenance(facets: dict, media_id: str) -> dict:
+def tag_provenance(facets: dict, media_id: str,
+                   modality: str = "image") -> dict:
     """Add modality_source + media_ref to every entry in a facets dict."""
     result = {}
     for key, entries in facets.items():
@@ -278,7 +371,7 @@ def tag_provenance(facets: dict, media_id: str) -> dict:
             result[key] = entries
             continue
         result[key] = [
-            {**e, "modality_source": "image", "media_ref": media_id}
+            {**e, "modality_source": modality, "media_ref": media_id}
             if isinstance(e, dict) else e
             for e in entries
         ]
@@ -361,12 +454,22 @@ def main() -> None:
             "Rescue mode (target the text-thinnest expositions that have images):\n"
             "  rc_multimodal.py output/inventory.jsonl output/multimodal.jsonl \\\n"
             "      --text-run output/pilot.jsonl --rescue --max-text-words 50 --sample 30\n\n"
+            "Single-exposition deep dive (all images, all pages, read designed-in text):\n"
+            "  rc_multimodal.py output/inventory.jsonl output/deepdive.jsonl \\\n"
+            "      --only 3001569 --all-images --ocr\n\n"
             "Full pass:\n"
             "  rc_multimodal.py output/inventory.jsonl output/multimodal.jsonl\n"
         ),
     )
     ap.add_argument("inventory_jsonl", help="Inventory JSONL from rc_inventory.py")
     ap.add_argument("output_jsonl",    help="Output JSONL (appended; resumable)")
+    ap.add_argument("--only", metavar="RC_ID",
+                    help="Process a single exposition by id (bypasses inventory)")
+    ap.add_argument("--all-images", action="store_true",
+                    help="No per-exposition image cap; scan all pages")
+    ap.add_argument("--ocr", action="store_true",
+                    help="Also transcribe text rendered inside images and extract "
+                         "facets from it (modality_source 'image-text')")
     ap.add_argument("--sample", type=int, metavar="N",
                     help="Limit to N expositions (micro-pilot / rescue cap)")
     ap.add_argument("--text-run", metavar="PATH",
@@ -411,11 +514,17 @@ def main() -> None:
     if args.rescue and not args.text_run:
         log.error("--rescue requires --text-run"); sys.exit(1)
 
-    records = load_inventory(Path(args.inventory_jsonl))
-    log.info("%d image-bearing expositions in inventory", len(records))
+    # ── Single-exposition deep dive bypasses the inventory entirely ─────────────
+    if args.only:
+        records = [{"rc_id": str(args.only), "title": "",
+                    "exposition_type": "deep-dive"}]
+        log.info("Deep-dive mode: exposition %s", args.only)
+    else:
+        records = load_inventory(Path(args.inventory_jsonl))
+        log.info("%d image-bearing expositions in inventory", len(records))
 
     # ── Rescue targeting: keep the text-thinnest, thinnest first ────────────────
-    if args.rescue:
+    if args.rescue and not args.only:
         words = load_text_words(Path(args.text_run))
         thin, unknown = [], 0
         for r in records:
@@ -462,17 +571,25 @@ def main() -> None:
         for i, inv in enumerate(pending, 1):
             rc_id = str(inv["rc_id"])
             title = inv.get("title", "") or ""
+
+            page_ids, fetched_title = fetch_structure(rc_id, snapshot_session)
+            if not title:
+                title = fetched_title
             log.info("[%d/%d] %s — %s", i, n, rc_id, title[:55])
 
-            page_ids   = fetch_page_ids(rc_id, snapshot_session)
-            candidates = harvest_image_urls(rc_id, page_ids, session, args.max_images)
-            log.info("    harvested %d fresh image URLs from %d pages",
-                     len(candidates), len(page_ids))
+            max_images = 10**6            if args.all_images else args.max_images
+            max_pages  = len(page_ids)    if args.all_images else MAX_PAGES_SCAN
+            candidates = harvest_image_urls(rc_id, page_ids, session,
+                                            max_images, max_pages)
+            log.info("    harvested %d fresh image URLs from %d pages%s",
+                     len(candidates), len(page_ids),
+                     " (OCR on)" if args.ocr else "")
 
             image_descs:     list[dict] = []
             merged_facets    = empty_facets()
             merged_unctrl:   list[dict] = []
             per_img_usage:   list[dict] = []
+            ocr_chunks:      list[str]  = []
 
             for block in candidates:
                 media_id = block.get("media_id") or block["url"]
@@ -487,9 +604,10 @@ def main() -> None:
 
                 b64, media_type_str = img
 
-                # Step 1 — describe
-                description, d_usage = call_describe(
+                # Step 1 — describe (+ transcribe designed-in text when --ocr)
+                description, ocr_text, d_usage = call_describe(
                     client, b64, media_type_str, title, args.describe_model,
+                    ocr=args.ocr,
                 )
                 tok["desc_in"]  += d_usage.get("input_tokens",  0)
                 tok["desc_out"] += d_usage.get("output_tokens", 0)
@@ -501,14 +619,22 @@ def main() -> None:
                     continue
 
                 word_count = len(description.split())
-                log.info("    %s → %d words", media_id[:24], word_count)
+                if ocr_text:
+                    ocr_chunks.append(ocr_text)
+                    log.info("    %s → %d words desc, %d words text",
+                             media_id[:24], word_count, len(ocr_text.split()))
+                else:
+                    log.info("    %s → %d words", media_id[:24], word_count)
 
-                image_descs.append({
+                desc_entry = {
                     "media_id":    media_id,
                     "url":         url,
                     "media_status": "described",
                     "description": description,
-                })
+                }
+                if ocr_text:
+                    desc_entry["ocr_text"] = ocr_text
+                image_descs.append(desc_entry)
 
                 # Skip extract step for decorative/blank images
                 if word_count <= DECORATIVE_MAX_WORDS:
@@ -563,11 +689,40 @@ def main() -> None:
                 if args.delay > 0:
                     time.sleep(args.delay)
 
+            # ── OCR aggregate: facets from text designed into the images ────────
+            image_text = "\n\n".join(ocr_chunks).strip()
+            if args.ocr and image_text:
+                log.info("    OCR aggregate: %d words of designed-in text → facets",
+                         len(image_text.split()))
+                try:
+                    tresult, t_usage = call_extract_text(
+                        client, system_blocks, rc_id, title,
+                        image_text, args.extract_model,
+                    )
+                    per_img_usage.append(t_usage)
+                    tok["ext_in"]       += t_usage["input_tokens"]
+                    tok["ext_out"]      += t_usage["output_tokens"]
+                    tok["cache_create"] += t_usage["cache_creation_input_tokens"]
+                    tok["cache_read"]   += t_usage["cache_read_input_tokens"]
+                    if not tresult.get("parse_error"):
+                        tagged = tag_provenance(tresult.get("facets", {}),
+                                                "image-text", modality="image-text")
+                        merged_facets = merge_facets(merged_facets, tagged)
+                        for u in (tresult.get("uncontrolled_terms") or []):
+                            if isinstance(u, dict):
+                                merged_unctrl.append({
+                                    **u, "modality_source": "image-text",
+                                    "media_ref": "image-text",
+                                })
+                except anthropic.APIError as exc:
+                    log.error("    image-text extract API error: %s", exc)
+
             out_rec = {
                 "rc_id":               rc_id,
                 "title":               title,
                 "exposition_type":     inv.get("exposition_type", ""),
                 "image_descriptions":  image_descs,
+                "image_text":          image_text,
                 "facets":              merged_facets,
                 "uncontrolled_terms":  merged_unctrl,
                 "_images_attempted":   len(candidates),
