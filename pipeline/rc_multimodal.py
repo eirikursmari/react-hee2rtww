@@ -166,22 +166,21 @@ BROWSER_UA      = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 IMG_EXTS        = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MAX_PAGES_SCAN  = 15   # stop harvesting after this many pages even if under cap
-VARIANT_CAP     = 1600 # Claude downscales beyond ~1568px long edge — no gain past this
+VARIANT_TARGET  = 1568 # Claude vision downscales beyond this — saturate detail here
 MEDIA_URL_RE    = re.compile(r'https://media\.researchcatalogue\.net/[^\s"\'<>)]+')
 HASH_RE         = re.compile(r'/([0-9a-f]{32})')
 DIMS_RE         = re.compile(r'_(\d+)x(\d+)\.(?:png|jpe?g|gif|webp)', re.IGNORECASE)
 
 
 def _variant_rank(url: str) -> tuple[int, int]:
-    """Rank a size variant: largest long-edge up to VARIANT_CAP is best; above the
-    cap prefer the smallest; unknown/original size ranks last (may be huge / >5MB)."""
+    """Rank a size variant. Usable detail is min(long_edge, VARIANT_TARGET) — the
+    API downscales past that — so maximise usable detail, then prefer the smaller
+    file. Unknown/original size ranks lowest (may exceed the 5MB API limit)."""
     m = DIMS_RE.search(url)
     if not m:
-        return (0, 0)
+        return (0, 0)               # unknown/original — last resort
     long_edge = max(int(m.group(1)), int(m.group(2)))
-    if long_edge <= VARIANT_CAP:
-        return (2, long_edge)       # best tier — bigger is more legible
-    return (1, -long_edge)          # over cap — smaller is safer/cheaper
+    return (min(long_edge, VARIANT_TARGET), -long_edge)
 
 
 def _get_retry(session: req_lib.Session, url: str,
@@ -241,10 +240,8 @@ def harvest_image_urls(expo_id: str, page_ids: list[str],
 
     result: list[dict] = []
     for key in order[:max_images]:
-        best = max(by_hash[key], key=_variant_rank)
-        m = DIMS_RE.search(best)
-        size = f"{m.group(1)}x{m.group(2)}" if m else "orig"
-        result.append({"media_id": key[:16], "url": best, "size": size})
+        ranked = sorted(set(by_hash[key]), key=_variant_rank, reverse=True)
+        result.append({"media_id": key[:16], "urls": ranked})
     return result
 
 
@@ -635,17 +632,26 @@ def main() -> None:
             ocr_chunks:      list[str]  = []
 
             for block in candidates:
-                media_id = block.get("media_id") or block["url"]
-                url      = block["url"]
+                variants = block.get("urls") or ([block["url"]] if block.get("url") else [])
+                media_id = block.get("media_id") or (variants[0] if variants else "")
 
-                img = fetch_image(url, session)
+                # Try variants largest-first; fall back if one is >5MB or errors.
+                img = url = None
+                for candidate_url in variants:
+                    img = fetch_image(candidate_url, session)
+                    if img is not None:
+                        url = candidate_url
+                        break
                 if img is None:
                     images_skipped += 1
-                    image_descs.append({"media_id": media_id, "url": url,
+                    image_descs.append({"media_id": media_id,
+                                        "url": variants[0] if variants else "",
                                         "media_status": "fetch_failed"})
                     continue
 
                 b64, media_type_str = img
+                m_size = DIMS_RE.search(url)
+                used_size = f"{m_size.group(1)}x{m_size.group(2)}" if m_size else "orig"
 
                 # Step 1 — describe (+ transcribe designed-in text when --ocr)
                 description, ocr_text, d_usage = call_describe(
@@ -672,7 +678,7 @@ def main() -> None:
                 desc_entry = {
                     "media_id":    media_id,
                     "url":         url,
-                    "size":        block.get("size", ""),
+                    "size":        used_size,
                     "media_status": "described",
                     "description": description,
                 }
