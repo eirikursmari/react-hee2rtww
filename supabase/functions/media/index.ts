@@ -90,11 +90,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST")
     return Response.json({ error: "POST required" }, { status: 405, headers: CORS });
 
-  const expected = Deno.env.get("APP_PASSPHRASE");
-  if (!expected)
-    return Response.json({ error: "APP_PASSPHRASE not set" }, { status: 500, headers: CORS });
-  if (req.headers.get("x-app-key") !== expected)
-    return Response.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  // Open, like `search` and `rc-proxy`: returns only non-sensitive derived
+  // content (image descriptions, OCR text, public RC thumbnail URLs).
 
   let ids: number[];
   try {

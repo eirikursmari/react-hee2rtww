@@ -251,7 +251,7 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle, semanticUrl,
   const [mediaLoading, setMediaLoading] = useState(false);
   const [mediaError,   setMediaError]   = useState("");
 
-  const canLoadMedia = Boolean(semanticUrl && appKey && exp.id != null);
+  const canLoadMedia = Boolean(semanticUrl && exp.id != null);
 
   const toggleMedia = useCallback(async () => {
     const next = !showMedia;
