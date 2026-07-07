@@ -95,21 +95,37 @@ def load_record(openai: OpenAI, sb, rec: dict) -> tuple[int, int]:
         .eq("exposition_id", expo_id).in_("source", ["image", "image-text"]).execute()
     sb.table("exposition_media").delete().eq("exposition_id", expo_id).execute()
 
-    # ── Build the texts to embed (descriptions + OCR chunks) ───────────────────
+    # ── Build the texts to embed ───────────────────────────────────────────────
+    # One chunk per image description (visual) AND one per image's OCR text.
+    # Per-image OCR keeps each text card focused — a diffuse aggregate chunk
+    # buries a clean thematic sentence among unrelated fragments and ranks poorly.
     texts:  list[str]  = []
     metas:  list[dict] = []   # parallel: {page_id, chunk_index, source, media_id}
+    img_ci = txt_ci = 0
+    any_ocr = False
 
     for d in imgs:
+        mid  = d.get("media_id", "")
         desc = (d.get("description") or "").strip()
         if desc:
             texts.append(desc)
-            metas.append({"page_id": PAGE_IMAGE, "chunk_index": len(metas),
-                          "source": "image", "media_id": d.get("media_id", "")})
+            metas.append({"page_id": PAGE_IMAGE, "chunk_index": img_ci,
+                          "source": "image", "media_id": mid})
+            img_ci += 1
+        for ck in chunk_text((d.get("ocr_text") or "").strip()):
+            any_ocr = True
+            texts.append(ck)
+            metas.append({"page_id": PAGE_IMAGE_TEXT, "chunk_index": txt_ci,
+                          "source": "image-text", "media_id": mid})
+            txt_ci += 1
 
-    for i, ck in enumerate(chunk_text(image_text)):
-        texts.append(ck)
-        metas.append({"page_id": PAGE_IMAGE_TEXT, "chunk_index": i,
-                      "source": "image-text", "media_id": ""})
+    # Fallback for older runs that stored only the aggregate image_text.
+    if not any_ocr and image_text:
+        for ck in chunk_text(image_text):
+            texts.append(ck)
+            metas.append({"page_id": PAGE_IMAGE_TEXT, "chunk_index": txt_ci,
+                          "source": "image-text", "media_id": ""})
+            txt_ci += 1
 
     chunks_written = 0
     if texts:
