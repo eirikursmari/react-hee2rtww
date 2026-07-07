@@ -175,6 +175,7 @@ Deno.serve(async (req) => {
         url:         r.url,
         similarity:  Math.round((r.blendedScore ?? r.similarity) * 1000) / 1000,
         matchedText: r.text,
+        matchedSource: r.source ?? "text",
       }));
 
     return Response.json({ results }, { headers: CORS });

@@ -232,12 +232,48 @@ async function callClaudeConversation(auth, systemCtx, history, question, modelI
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
+// Provenance of a semantic match: where in the exposition the hit came from.
+const MATCH_SOURCE = {
+  image:        { icon: "📷", label: "in a photograph" },
+  "image-text": { icon: "✍️", label: "text within an image" },
+};
+
+function ExpositionCard({ exp, index, semantic, selected, onToggle, semanticUrl, appKey }) {
   const author   = getAuthorName(exp);
   const keywords = getKeywords(exp);
   const abstract = exp.abstract || exp.description || "";
   const url      = getExpositionUrl(exp);
   const thumb    = exp.thumbnail || exp["default-page"]?.screenshot || exp.screenshot;
+  const src      = MATCH_SOURCE[exp.matchedSource];
+
+  const [showMedia, setShowMedia]       = useState(false);
+  const [media,     setMedia]           = useState(null);   // null=unloaded, []=none
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaError,   setMediaError]   = useState("");
+
+  const canLoadMedia = Boolean(semanticUrl && appKey && exp.id != null);
+
+  const toggleMedia = useCallback(async () => {
+    const next = !showMedia;
+    setShowMedia(next);
+    if (!next || media !== null || mediaLoading || !canLoadMedia) return;
+    setMediaLoading(true); setMediaError("");
+    try {
+      const res = await fetch(siblingFnUrl(semanticUrl, "media"), {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "x-app-key": appKey },
+        body:    JSON.stringify({ ids: [exp.id] }),
+      });
+      if (!res.ok) throw new Error(`media ${res.status}`);
+      const data = await res.json();
+      setMedia((data.media && data.media[exp.id]) || []);
+    } catch (e) {
+      setMediaError(e.message || "Could not load media");
+      setMedia([]);
+    } finally {
+      setMediaLoading(false);
+    }
+  }, [showMedia, media, mediaLoading, canLoadMedia, semanticUrl, appKey, exp.id]);
 
   return (
     <article className={`exp-card${selected ? " exp-card-selected" : ""}`}>
@@ -262,6 +298,11 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
               {Math.round(exp.similarity * 100)}% match
             </span>
           )}
+          {src && (
+            <span className="match-source-badge" title={`Matched ${src.label}`}>
+              {src.icon} {src.label}
+            </span>
+          )}
         </div>
         {abstract && (
           <p className="exp-abstract">
@@ -281,6 +322,42 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle }) {
             {keywords.slice(0, 7).map((kw, i) => (
               <span className="kw-tag" key={i}>{kw}</span>
             ))}
+          </div>
+        )}
+        {canLoadMedia && (
+          <div className="exp-media">
+            <button type="button" className="exp-media-toggle" onClick={toggleMedia}>
+              {showMedia ? "▾ Hide images & recovered text" : "▸ Images & recovered text"}
+            </button>
+            {showMedia && (
+              <div className="exp-media-panel">
+                {mediaLoading && <p className="exp-media-note">Loading…</p>}
+                {mediaError && <p className="exp-media-note exp-media-error">{mediaError}</p>}
+                {media && media.length === 0 && !mediaLoading && (
+                  <p className="exp-media-note">No multimodal content indexed for this exposition.</p>
+                )}
+                {media && media.length > 0 && (
+                  <div className="exp-media-grid">
+                    {media.map((m, i) => (
+                      <figure className="exp-media-item" key={m.media_id || i}>
+                        {m.thumb_url && (
+                          <img className="exp-media-thumb" src={m.thumb_url} alt=""
+                            loading="lazy" referrerPolicy="no-referrer" />
+                        )}
+                        {m.description && (
+                          <figcaption className="exp-media-desc">{m.description}</figcaption>
+                        )}
+                        {m.ocr_text && (
+                          <p className="exp-media-ocr">
+                            <span className="ocr-label">Text in image: </span>{m.ocr_text}
+                          </p>
+                        )}
+                      </figure>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1521,7 +1598,8 @@ export default function App() {
                 <div className="results-list">
                   {expositions.map((exp, i) => (
                     <ExpositionCard key={exp.id ?? i} exp={exp} index={i} semantic={isSemantic}
-                      selected={selectedIds.has(exp.id)} onToggle={toggleSelect} />
+                      selected={selectedIds.has(exp.id)} onToggle={toggleSelect}
+                      semanticUrl={semanticUrl} appKey={appKey} />
                   ))}
                 </div>
 
