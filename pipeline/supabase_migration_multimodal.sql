@@ -38,7 +38,11 @@ CREATE INDEX IF NOT EXISTS exposition_media_expo_idx
   ON exposition_media (exposition_id);
 
 -- ── 3. Recreate the search RPC to surface `source` ────────────────────────────
-CREATE OR REPLACE FUNCTION match_exposition_chunks(
+-- DROP first: Postgres refuses to change an existing function's return type
+-- (adding the `source` column) via CREATE OR REPLACE.
+DROP FUNCTION IF EXISTS match_exposition_chunks(vector, integer, double precision);
+
+CREATE FUNCTION match_exposition_chunks(
   query_embedding  vector(1536),
   match_count      INTEGER DEFAULT 30,
   match_threshold  FLOAT   DEFAULT 0.3
