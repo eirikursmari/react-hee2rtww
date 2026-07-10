@@ -422,8 +422,12 @@ def upsert_exposition(sb: Client, expo: dict, metadata: Optional[dict] = None,
     sb.table("expositions").upsert(row).execute()
 
 
+ABSTRACT_PAGE = -3   # negative page_id namespace for the title+abstract chunk
+
+
 def upsert_chunks(sb: Client, expo_id: int, page_id: int,
-                  chunks: list[str], embeddings: list[list[float]]):
+                  chunks: list[str], embeddings: list[list[float]],
+                  source: str = "text"):
     sb.table("exposition_chunks") \
       .delete() \
       .eq("exposition_id", expo_id) \
@@ -432,11 +436,27 @@ def upsert_chunks(sb: Client, expo_id: int, page_id: int,
 
     rows = [
         {"exposition_id": expo_id, "page_id": page_id,
-         "chunk_index": i, "text": chunk, "embedding": emb}
+         "chunk_index": i, "text": chunk, "embedding": emb, "source": source}
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings))
     ]
     if rows:
         sb.table("exposition_chunks").insert(rows).execute()
+
+
+def abstract_chunk_text(title: str, abstract: str) -> str:
+    """Title + abstract as one searchable chunk — the cleanest thematic signal,
+    and often the only good text for media-heavy / text-sparse expositions."""
+    parts = [p.strip() for p in (title, abstract) if p and p.strip()]
+    return "\n\n".join(parts)
+
+
+def upsert_abstract_chunk(openai: OpenAI, sb: Client, expo_id: int,
+                          title: str, abstract: str):
+    text = abstract_chunk_text(title, abstract)
+    if not text:
+        return
+    emb = embed_all(openai, [text])
+    upsert_chunks(sb, expo_id, ABSTRACT_PAGE, [text], emb, source="abstract")
 
 
 def is_indexed(sb: Client, expo_id: int) -> bool:
@@ -469,11 +489,13 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
         mark_unavailable(sb, expo_id)
         return
 
+    full_title = expo.get("title", "") or ""
+    abstract   = expo.get("abstract") or expo.get("description") or ""
+
     metadata = None
     if anthropic_client and content:
         pages    = extract_pages(content)
         body     = "\n\n".join(p["text"] for p in pages)
-        abstract = expo.get("abstract") or expo.get("description") or ""
         log.info("  Extracting metadata…")
         metadata = extract_metadata(
             anthropic_client, title,
@@ -486,6 +508,10 @@ def index_exposition(openai: OpenAI, sb: Client, expo: dict, anthropic_client=No
         time.sleep(CLAUDE_DELAY)
 
     upsert_exposition(sb, expo, metadata, schema)
+
+    # Title + abstract as a dedicated searchable chunk — independent of body
+    # text, so media-heavy / text-sparse expositions are still findable.
+    upsert_abstract_chunk(openai, sb, expo_id, full_title, abstract)
 
     if not content:
         return
