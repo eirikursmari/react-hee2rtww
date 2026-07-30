@@ -131,14 +131,37 @@ The through-line is that the tool's trustworthiness rests not on being infallibl
 
 ---
 
-## 8. Future Directions
+## 8. Related Work: Where *Excavating* Sits
+
+*Excavating Artistic Research* belongs to a fast-growing family of systems applying retrieval-augmented generation (RAG) to cultural-heritage collections. Setting it beside the closest of these sharpens what is distinctive about it.
+
+**Topic-RAG** (Murugaraj et al., 2025, University of Luxembourg) is the nearest comparator by design. Working over 4,711 historical Swiss newspaper articles on nuclear energy (the *Impresso* corpus), it inserts a **topic-modeling gate** in front of retrieval: BERTopic clusters the corpus into latent topics; a query is matched to its most relevant topics (an anchor topic plus any scoring at least 50% of it); and retrieval is then confined to documents within those topics before an LLM generates the answer. Against a standard RAG baseline it reports consistently higher BERTScore, ROUGE, and UniEval, and faster retrieval — because it never scans the whole corpus. A companion variant, *Topic-RAG+*, adds semantic chunking for long documents.
+
+The parallel to *Excavating* is exact in structure and instructive in contrast. Both systems **scope retrieval to a thematically coherent subset before ranking** — the move that lifts precision. But they build that subset from opposite ends of the axis this report calls the two senses of "semantics" (see the note after §5):
+
+- **Topic-RAG scopes with distributional structure** — unsupervised BERTopic clusters, discovered from the data, requiring no human vocabulary.
+- ***Excavating* scopes with controlled structure** — LLM-extracted facets drawn from a curated vocabulary mapped to authority files (§4).
+
+Each choice carries the costs its tradition predicts, and Topic-RAG's own results make the tradeoff legible. Its authors report a **"Topic 0" bias**: one cluster absorbed 1,966 of the 4,711 articles (the rest held between 23 and 326 each), and queries were pulled toward that oversized topic — a failure mode of *emergent* categories on an imbalanced corpus that a *controlled* scheme is designed to avoid. Conversely, their topics need no curation and can surface structure no one thought to name — something a controlled scheme cannot. Tellingly, two items on Topic-RAG's own future-work list — **preserving provenance** and adding **explainable-AI transparency** — are properties *Excavating* builds in from the start, through per-term evidence, confidence, and modality provenance (§4.4, §6.2).
+
+Three things set *Excavating* apart from Topic-RAG and adjacent archive-RAG systems (such as HistoRAG and the broader body of work on RAG over digitized archives), which are almost all **text-only** and **historical**:
+
+1. **Domain** — artistic rather than textual/historical research, where the object of inquiry is often a practice, not a document.
+2. **Multimodality** — recovering research content from images and their designed-in text (§6), reaching works that leave little or no textual trace; the comparator systems index prose alone.
+3. **Auditable controlled vocabulary** — scoping terms are evidenced and mapped to shared authority files, making the tool's categories interoperable and inspectable rather than emergent and opaque.
+
+In short, *Excavating* and Topic-RAG address the same core problem — thematic scoping for humanities retrieval — from complementary halves of the semantic field. Topic-RAG is the strongest recent evidence that pre-retrieval scoping works; its limitations are a map of what a controlled, provenance-first, multimodal alternative is positioned to address.
+
+*Reference:* Murugaraj, K., Lamsiyah, S., Düring, M., & Theobald, M. (2025). *Topic-RAG for Historical Newspapers: Enhancing Information Retrieval in Humanities Research through Topic-Based Retrieval-Augmented Generation.* Computational Humanities Research (Open Access). Code: github.com/KeerthanaMurugaraj/Topic-RAG-for-Historical-Newspapers
+
+---
+
+## 9. Future Directions
 
 - Extending multimodal analysis to **video and audio** (keyframe description and speech transcription).
 - Promoting stable inductive terms into the controlled vocabulary and **publishing it as an open, citable resource** (e.g. as SKOS), so the methods vocabulary becomes an output in its own right.
 - Reconciling controlled terms to live authority-file URIs for full interoperability.
 - A calibration pass to firm up coverage and cost before a full-corpus multimodal run.
-
----
 
 ---
 
