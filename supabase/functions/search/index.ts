@@ -73,8 +73,12 @@ Deno.serve(async (req) => {
     }
     const embedding = (await embRes.json()).data[0].embedding;
 
-    // 2. Vector search — fetch more candidates when filtering
-    const matchCount = (hasFilters || hasCustomCats) ? limit * 20 : limit * 4;
+    // 2. Vector search — fetch a wide candidate pool of chunks, then dedup to
+    // one-per-exposition below. A generous floor keeps thin expositions (few
+    // chunks — e.g. multimodal-rescued ones) in contention: with a small pool
+    // a slight query-phrasing shift can push their single chunk past the cutoff
+    // and drop them from results entirely. Wider when filtering/blending.
+    const matchCount = Math.max(300, (hasFilters || hasCustomCats) ? limit * 20 : limit * 8);
     const sbRes = await fetch(
       SUPABASE_URL + "/rest/v1/rpc/match_exposition_chunks",
       {
