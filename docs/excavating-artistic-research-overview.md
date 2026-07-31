@@ -133,7 +133,9 @@ The through-line is that the tool's trustworthiness rests not on being infallibl
 
 ## 8. Related Work: Where *Excavating* Sits
 
-*Excavating Artistic Research* belongs to a fast-growing family of systems applying retrieval-augmented generation (RAG) to cultural-heritage collections. Setting it beside the closest of these sharpens what is distinctive about it.
+*Excavating Artistic Research* belongs to a fast-growing family of AI systems working over cultural-heritage collections. Setting it beside two — one from information retrieval, one from its own field of artistic research — sharpens what is distinctive about it.
+
+### 8.1 A retrieval comparator — Topic-RAG
 
 **Topic-RAG** (Murugaraj et al., 2025, University of Luxembourg) is the nearest comparator by design. Working over 4,711 historical Swiss newspaper articles on nuclear energy (the *Impresso* corpus), it inserts a **topic-modeling gate** in front of retrieval: BERTopic clusters the corpus into latent topics; a query is matched to its most relevant topics (an anchor topic plus any scoring at least 50% of it); and retrieval is then confined to documents within those topics before an LLM generates the answer. Against a standard RAG baseline it reports consistently higher BERTScore, ROUGE, and UniEval, and faster retrieval — because it never scans the whole corpus. A companion variant, *Topic-RAG+*, adds semantic chunking for long documents.
 
@@ -153,6 +155,18 @@ Three things set *Excavating* apart from Topic-RAG and adjacent archive-RAG syst
 In short, *Excavating* and Topic-RAG address the same core problem — thematic scoping for humanities retrieval — from complementary halves of the semantic field. Topic-RAG is the strongest recent evidence that pre-retrieval scoping works; its limitations are a map of what a controlled, provenance-first, multimodal alternative is positioned to address.
 
 *Reference:* Murugaraj, K., Lamsiyah, S., Düring, M., & Theobald, M. (2025). *Topic-RAG for Historical Newspapers: Enhancing Information Retrieval in Humanities Research through Topic-Based Retrieval-Augmented Generation.* Computational Humanities Research (Open Access). Code: github.com/KeerthanaMurugaraj/Topic-RAG-for-Historical-Newspapers
+
+### 8.2 A comparator from the same field — °'°KOBI
+
+Closer to home than Topic-RAG — the same domain, the opposite paradigm — is **°'°KOBI** (Andrea Guidi), an AI "knowledge ecosystem for creativity, research, and design" that also draws on the Research Catalogue: through a collaboration with the Society for Artistic Research, students contribute RC projects that expand its knowledge base. A large language model transforms a corpus of artistic *and* scientific publications into a dynamic "Universe" of semantic nodes — each knowledge fragment placed in an interdisciplinary space and linked to others by *thematic resonance*, which users explore as a visual constellation (including through an augmented-reality interface) to surface unexpected correlations and "counterfactual" lines of thought.
+
+KOBI and *Excavating* sit at opposite ends of a *different* axis from the Topic-RAG contrast — not controlled-versus-distributional, but **divergent-versus-convergent**. KOBI is a *generative* instrument: it optimises for serendipity, dissolving disciplinary silos and provoking new ideas by making a browsable map of connections. *Excavating* is an *analytical* one: it optimises for findability and defensibility, returning ranked, cited results to a specific query. One invites you to wander and be surprised; the other answers a question you can act on — and the interaction models mirror this, KOBI's spatial/AR constellation of fragments against *Excavating*'s query-and-rank search with grounded answers.
+
+Read against KOBI, three of *Excavating*'s commitments show up as deliberate choices rather than defaults: **retrieval precision with citations** (versus open-ended browsing), the **controlled, auditable vocabulary** of §4 (KOBI links by emergent resonance, with no controlled layer evident), and the **multimodal recovery** of §6, which reaches content locked inside images. The two are best read as complementary tools for different moments of research — KOBI for the divergent, idea-generating phase; *Excavating* for the convergent, find-and-verify phase. That KOBI occupies the pure-serendipity end of the design space is itself an argument for *Excavating*'s precision-and-provenance stance.
+
+*This comparison is drawn from KOBI's published descriptions and the exposition's abstract; the exposition's full text could not be retrieved directly, so specific implementation details (exact model, whether it performs retrieval-augmented generation, the visualisation stack) are characterised only at the level its public materials state.*
+
+*Reference:* Guidi, A. *AI for Collective Intelligence and Creativity: The Case of °'°KOBI — a Tool for Interdisciplinary and Artistic Research.* Research Catalogue, exposition 3101870. See also Guidi, A. (2023), *KOBI 3.0: A Knowledge Ecosystem for Creativity, Research and Design.*
 
 ---
 
