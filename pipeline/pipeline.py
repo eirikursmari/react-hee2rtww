@@ -684,15 +684,17 @@ def extract_classifier_labels(response_json: dict, clf: dict) -> list[str]:
         if isinstance(item, str):
             labels.append(item)
         elif isinstance(item, dict):
+            # label_field / score_field may be dot-paths into nested objects
+            # (e.g. Aurora SDG: label at "sdg.name", score at "prediction").
             if score_field:
                 try:
-                    score = float(item.get(score_field, 0))
+                    score = float(get_nested_path(item, score_field))
                 except (TypeError, ValueError):
                     continue
                 if score < threshold:
                     continue
             if label_field:
-                lbl = item.get(label_field)
+                lbl = get_nested_path(item, label_field)
                 if lbl:
                     labels.append(str(lbl))
     return labels
