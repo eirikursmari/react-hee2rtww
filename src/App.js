@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import "./style.css";
 
@@ -481,6 +481,108 @@ function mergeFilterOptions(dynamic) {
   return Array.from(byKey.values());
 }
 
+// ── Corpus / SDG Explorer (client-side aggregation + lightweight charts) ───────
+
+const BREAKDOWN_DIMS = [
+  { key: "published_in",           label: "Journal / portal",       arr: true  },
+  { key: "artistic_medium",        label: "Artistic medium",        arr: true  },
+  { key: "research_approach",      label: "Research approach",      arr: true  },
+  { key: "methodological_framing", label: "Methodological framing", arr: true  },
+  { key: "geographic_context",     label: "Geographic context",     arr: true  },
+  { key: "impact_types",           label: "Impact type",            arr: true  },
+  { key: "language",               label: "Language",               arr: false },
+];
+
+const sdgLabelsOf = (row) => {
+  const v = row?.custom_metadata?.sdg_labels;
+  return Array.isArray(v) ? v.filter(Boolean) : [];
+};
+
+const dimValuesOf = (row, dim) => {
+  const v = row?.[dim.key];
+  if (dim.arr) return Array.isArray(v) ? v.filter(Boolean) : [];
+  return v ? [String(v)] : [];
+};
+
+const yearOf = (row) => {
+  const m = String(row?.created_at || "").match(/(\d{4})/);
+  return m ? m[1] : null;
+};
+
+// Count occurrences of the values produced by valuesFn across rows → sorted desc.
+function countValues(rows, valuesFn) {
+  const m = new Map();
+  for (const r of rows) for (const v of valuesFn(r)) m.set(v, (m.get(v) || 0) + 1);
+  return [...m.entries()].sort(
+    (a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))
+  );
+}
+
+// Horizontal bar chart — CSS bars: responsive, one ink, optional click-to-select.
+function HBar({ data, selectedKey, onSelect, emptyNote = "No data." }) {
+  if (!data || data.length === 0) return <p className="explorer-note">{emptyNote}</p>;
+  const top = data[0][1] || 1;
+  return (
+    <div className="hbar">
+      {data.map(([label, count]) => {
+        const active = selectedKey != null && label === selectedKey;
+        const pct = Math.max(2, (count / top) * 100);
+        return (
+          <button
+            key={label}
+            type="button"
+            className={`hbar-row${onSelect ? " hbar-row-click" : ""}${active ? " hbar-row-active" : ""}`}
+            onClick={onSelect ? () => onSelect(active ? null : label) : undefined}
+            title={`${label}: ${count.toLocaleString()}`}
+          >
+            <span className="hbar-label">{label}</span>
+            <span className="hbar-track"><span className="hbar-fill" style={{ width: pct + "%" }} /></span>
+            <span className="hbar-value">{count.toLocaleString()}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Compact SVG line chart of [year, count] pairs (single series).
+function TrendLine({ data }) {
+  if (!data || data.length < 2)
+    return <p className="explorer-note">Not enough dated expositions to plot a trend.</p>;
+  const W = 640, H = 200, PL = 40, PR = 14, PT = 12, PB = 26;
+  const years  = data.map((d) => +d[0]);
+  const counts = data.map((d) => d[1]);
+  const minY = Math.min(...years), maxY = Math.max(...years);
+  const maxC = Math.max(...counts) || 1;
+  const x = (yr) => PL + (maxY === minY ? 0 : (yr - minY) / (maxY - minY)) * (W - PL - PR);
+  const y = (c)  => H - PB - (c / maxC) * (H - PT - PB);
+  const pts = data.map((d) => `${x(+d[0]).toFixed(1)},${y(d[1]).toFixed(1)}`).join(" ");
+  const span = maxY - minY;
+  const step = span <= 8 ? 1 : Math.ceil(span / 8);
+  const ticks = [];
+  for (let yr = minY; yr <= maxY; yr += step) ticks.push(yr);
+  return (
+    <div className="trend-wrap">
+      <svg viewBox={`0 0 ${W} ${H}`} className="trend-svg" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Expositions per year">
+        <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} className="trend-axis" />
+        <line x1={PL} y1={PT} x2={PL} y2={H - PB} className="trend-axis" />
+        <text x={PL - 6} y={y(maxC) + 4} className="trend-tick" textAnchor="end">{maxC}</text>
+        <text x={PL - 6} y={y(0) + 4}    className="trend-tick" textAnchor="end">0</text>
+        <polyline points={pts} className="trend-line" fill="none" />
+        {data.map((d) => (
+          <circle key={d[0]} cx={x(+d[0])} cy={y(d[1])} r="3" className="trend-dot">
+            <title>{d[0]}: {d[1].toLocaleString()}</title>
+          </circle>
+        ))}
+        {ticks.map((yr) => (
+          <text key={yr} x={x(yr)} y={H - PB + 15} className="trend-tick" textAnchor="middle">{yr}</text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -497,6 +599,13 @@ export default function App() {
   const [analyticsConversation, setAnalyticsConversation] = useState([]);
   const [analyticsLoading,      setAnalyticsLoading]      = useState(false);
   const [analyticsError,        setAnalyticsError]        = useState("");
+
+  // ── SDG / Corpus Explorer ──
+  const [corpusRows,    setCorpusRows]    = useState(null);   // null = not loaded
+  const [corpusLoading, setCorpusLoading] = useState(false);
+  const [corpusLoadErr, setCorpusLoadErr] = useState("");
+  const [explSdg,       setExplSdg]       = useState(null);   // focused SDG, or null = all
+  const [explDim,       setExplDim]       = useState("published_in");
   const [corpusTotal,           setCorpusTotal]           = useState(null);
   const analyticsEndRef = useRef(null);
 
@@ -505,6 +614,39 @@ export default function App() {
     const useSemantic = localStorage.getItem("rc_use_semantic") !== "0";
     return hasUrl && useSemantic ? "semantic" : "keyword";
   });
+
+  // Load corpus metadata once, the first time the Analytics tab is opened.
+  useEffect(() => {
+    if (activeTab !== "analytics" || corpusRows || corpusLoading || !semanticUrl || !appKey) return;
+    setCorpusLoading(true); setCorpusLoadErr("");
+    fetch(siblingFnUrl(semanticUrl, "analytics"), {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "x-app-key": appKey },
+      body:    JSON.stringify({ mode: "data" }),
+    })
+      .then((r) => r.ok
+        ? r.json()
+        : r.json().catch(() => ({})).then((e) => Promise.reject(new Error(e.error || r.statusText))))
+      .then((d) => setCorpusRows(Array.isArray(d.rows) ? d.rows : []))
+      .catch((e) => setCorpusLoadErr(e.message || "Could not load corpus data"))
+      .finally(() => setCorpusLoading(false));
+  }, [activeTab, corpusRows, corpusLoading, semanticUrl, appKey]);
+
+  const sdgDist    = useMemo(() => (corpusRows ? countValues(corpusRows, sdgLabelsOf) : []), [corpusRows]);
+  const taggedCount = useMemo(
+    () => (corpusRows ? corpusRows.filter((r) => sdgLabelsOf(r).length).length : 0), [corpusRows]);
+  const explSubset = useMemo(() => {
+    if (!corpusRows) return [];
+    return explSdg ? corpusRows.filter((r) => sdgLabelsOf(r).includes(explSdg)) : corpusRows;
+  }, [corpusRows, explSdg]);
+  const breakdownData = useMemo(() => {
+    const dim = BREAKDOWN_DIMS.find((d) => d.key === explDim) || BREAKDOWN_DIMS[0];
+    return countValues(explSubset, (r) => dimValuesOf(r, dim)).slice(0, 15);
+  }, [explSubset, explDim]);
+  const trendData = useMemo(
+    () => countValues(explSubset, (r) => { const y = yearOf(r); return y ? [y] : []; })
+            .sort((a, b) => +a[0] - +b[0]),
+    [explSubset]);
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
@@ -1507,6 +1649,64 @@ export default function App() {
                   <p><strong>Follow-up questions:</strong> Ask a question, then refine or dig deeper — the conversation builds on previous answers without re-fetching statistics each time.</p>
                   <p><strong>Limitations:</strong> Works with metadata distributions only, not exposition content. Cannot find specific expositions, quote passages, or answer questions that require reading individual works. Statistics cover ~96% of expositions with extracted metadata.</p>
                 </div>
+              )}
+            </div>
+
+            {/* ── SDG / Corpus Explorer ── */}
+            <div className="sdg-explorer">
+              <div className="explorer-head">
+                <h3 className="explorer-title">SDG Explorer</h3>
+                {corpusRows && (
+                  <span className="explorer-sub">
+                    {taggedCount.toLocaleString()} of {corpusRows.length.toLocaleString()} expositions carry an SDG label
+                  </span>
+                )}
+              </div>
+
+              {corpusLoading && <p className="answer-loading">Loading corpus data…</p>}
+              {corpusLoadErr && <p className="answer-error">{corpusLoadErr}</p>}
+
+              {corpusRows && corpusRows.length > 0 && (
+                <>
+                  <section className="explorer-section">
+                    <h4 className="explorer-h">
+                      Expositions by SDG
+                      <span className="explorer-hint"> — click a goal to focus the views below</span>
+                    </h4>
+                    <HBar data={sdgDist} selectedKey={explSdg} onSelect={setExplSdg}
+                      emptyNote="No SDG labels found — run the classifier first." />
+                    <p className="explorer-note">
+                      {(corpusRows.length - taggedCount).toLocaleString()} expositions carry no SDG label (not about a goal).
+                      Each exposition may hold more than one goal, so bar counts sum to more than the number of tagged works.
+                    </p>
+                  </section>
+
+                  <section className="explorer-section">
+                    <h4 className="explorer-h">
+                      {explSdg ? <><strong>{explSdg}</strong> — by </> : "All expositions — by "}
+                      <select className="explorer-select" value={explDim}
+                        onChange={(e) => setExplDim(e.target.value)}>
+                        {BREAKDOWN_DIMS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                      </select>
+                      {explSdg && (
+                        <button type="button" className="explorer-clear" onClick={() => setExplSdg(null)}>
+                          × clear goal
+                        </button>
+                      )}
+                    </h4>
+                    <HBar data={breakdownData} emptyNote="No values for this breakdown." />
+                    {breakdownData.length === 15 && (
+                      <p className="explorer-note">Showing the top 15 values.</p>
+                    )}
+                  </section>
+
+                  <section className="explorer-section">
+                    <h4 className="explorer-h">
+                      {explSdg ? <><strong>{explSdg}</strong> — over time</> : "All expositions — over time"}
+                    </h4>
+                    <TrendLine data={trendData} />
+                  </section>
+                </>
               )}
             </div>
 

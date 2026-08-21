@@ -14,7 +14,8 @@ const CORS = {
 };
 
 const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
-               "methodological_framing,impact_types,language,unavailable";
+               "methodological_framing,geographic_context,impact_types,language," +
+               "custom_metadata,unavailable";
 
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {
   const PAGE = 1000;
@@ -125,22 +126,37 @@ Deno.serve(async (req) => {
     return Response.json({ error: "Unauthorized — check the access passphrase in ⚙ settings" }, { status: 401, headers: CORS });
   }
 
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const KEY          = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const sbHeaders    = { "Content-Type": "application/json", apikey: KEY, Authorization: "Bearer " + KEY };
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
+  }
+
+  // Data mode — return the raw metadata rows for the client-side visual
+  // explorer (charts). No Anthropic call, no question required.
+  if (body?.mode === "data") {
+    try {
+      const rows = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
+      return Response.json({ rows, total: rows.length }, { headers: CORS });
+    } catch (err: any) {
+      return Response.json({ error: err.message ?? "Internal error" }, { status: 500, headers: CORS });
+    }
+  }
+
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     return Response.json({ error: "ANTHROPIC_API_KEY secret not set in this edge function" }, { status: 500, headers: CORS });
   }
 
-  let question: string, model: string, history: { q: string; a: string }[];
-  try {
-    ({ question, model = "claude-sonnet-4-6", history = [] } = await req.json());
-  } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400, headers: CORS });
-  }
+  const question = (body?.question as string) || "";
+  const model    = (body?.model as string) || "claude-sonnet-4-6";
+  const history  = (body?.history as { q: string; a: string }[]) || [];
   if (!question?.trim()) return Response.json({ error: "question is required" }, { status: 400, headers: CORS });
-
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const KEY          = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const sbHeaders    = { "Content-Type": "application/json", apikey: KEY, Authorization: "Bearer " + KEY };
 
   try {
     const rows  = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
