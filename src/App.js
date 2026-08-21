@@ -467,6 +467,20 @@ const FILTER_OPTIONS = [
     ]},
 ];
 
+// Merge dynamic filter dimensions from Supabase (external-classifier labels
+// like SDG) with the built-in FILTER_OPTIONS, instead of replacing them.
+// A classifier run writes only its own entry to pipeline_config.filter_config,
+// so replacing would wipe the built-in dimensions; keep both, dynamic last,
+// dynamic winning on a key collision.
+function mergeFilterOptions(dynamic) {
+  if (!Array.isArray(dynamic) || dynamic.length === 0) return FILTER_OPTIONS;
+  const byKey = new Map(FILTER_OPTIONS.map((f) => [f.key, f]));
+  for (const f of dynamic) {
+    if (f && f.key) byKey.set(f.key, f);
+  }
+  return Array.from(byKey.values());
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -722,7 +736,7 @@ export default function App() {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.filterConfig && Array.isArray(data.filterConfig) && data.filterConfig.length > 0) {
-          setFilterOptions(data.filterConfig);
+          setFilterOptions(mergeFilterOptions(data.filterConfig));
         }
       })
       .catch(() => {});
@@ -846,7 +860,7 @@ export default function App() {
         const searchRes = await fetch(semanticUrl.replace(/^[<\s]+|[>\s]+$/g, "")).catch(() => null);
         if (searchRes?.ok) {
           const searchData = await searchRes.json().catch(() => ({}));
-          if (searchData?.filterConfig?.length) setFilterOptions(searchData.filterConfig);
+          if (searchData?.filterConfig?.length) setFilterOptions(mergeFilterOptions(searchData.filterConfig));
         }
       } catch (err) {
         setSchemaError(err.message);
