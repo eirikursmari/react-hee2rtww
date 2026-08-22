@@ -64,6 +64,13 @@ function buildStats(rows: any[]): string {
   const unavailable = rows.filter(r => r.unavailable && !hasMeta(r)).length;
   const pending     = total - extracted - unavailable;
 
+  // Aurora SDG labels live under custom_metadata.sdg_labels — flatten to a
+  // top-level field so dist()/cross-tab helpers can aggregate them.
+  for (const r of rows) {
+    r._sdg = Array.isArray(r.custom_metadata?.sdg_labels) ? r.custom_metadata.sdg_labels : [];
+  }
+  const sdgTagged = rows.filter((r) => r._sdg.length > 0).length;
+
   // Year counts
   const yearMap: Record<string, number> = {};
   for (const r of rows) {
@@ -92,6 +99,19 @@ function buildStats(rows: any[]): string {
     return `  ${j}: ${top || "—"}`;
   }).join("\n");
 
+  // SDG by year and by journal (same cross-tab shape as the impact/approach ones)
+  const sdgTrend = Object.entries(byYear).sort()
+    .map(([y, rs]) => {
+      const top = dist(rs, "_sdg", true).slice(0, 5).map(([k, v]) => `${k}(${v})`).join(", ");
+      return `  ${y}: ${top || "—"}`;
+    }).join("\n");
+
+  const sdgByJournal = topJournals.map(j => {
+    const jRows = rows.filter(r => Array.isArray(r.published_in) && r.published_in.includes(j));
+    const top = dist(jRows, "_sdg", true).slice(0, 5).map(([k, v]) => `${k}(${v})`).join(", ");
+    return `  ${j}: ${top || "—"}`;
+  }).join("\n");
+
   const langSection = dist(rows, "language").length > 0
     ? `\nLANGUAGE:\n${fmt(dist(rows, "language"), 20)}\n` : "";
 
@@ -106,12 +126,18 @@ ARTISTIC MEDIUM:\n${fmt(dist(rows, "artistic_medium", true))}
 METHODOLOGICAL FRAMING:\n${fmt(dist(rows, "methodological_framing", true))}
 
 IMPACT TYPES:\n${fmt(dist(rows, "impact_types", true))}
+
+SDG LABELS — Aurora classifier (${sdgTagged} of ${total} expositions carry ≥1 goal; multi-label, so counts exceed that total):\n${fmt(dist(rows, "_sdg", true), 20)}
 ${langSection}
 EXPOSITIONS BY YEAR:\n${yearStr}
 
 IMPACT TYPES BY YEAR (top 5 per year):\n${impactTrend}
 
-RESEARCH APPROACH BY JOURNAL (top 8 journals):\n${approachByJournal}`;
+SDG BY YEAR (top 5 per year):\n${sdgTrend}
+
+RESEARCH APPROACH BY JOURNAL (top 8 journals):\n${approachByJournal}
+
+SDG BY JOURNAL (top 5 per top journal):\n${sdgByJournal}`;
 }
 
 Deno.serve(async (req) => {
