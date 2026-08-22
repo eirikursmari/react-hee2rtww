@@ -682,6 +682,15 @@ export default function App() {
   const [corpusLoadErr, setCorpusLoadErr] = useState("");
   const [explSdg,       setExplSdg]       = useState(null);   // focused SDG, or null = all
   const [explDim,       setExplDim]       = useState("published_in");
+  // Collapse toggles + Chart Builder controls — declared before the lazy-fetch
+  // effect below, which references showExplorer/showBuilder in its deps.
+  const [showFilters,       setShowFilters]       = useState(false);  // Semantic filters — collapsed by default
+  const [showExplorer,      setShowExplorer]      = useState(false);  // SDG Explorer — collapsed by default
+  const [showBuilder,       setShowBuilder]       = useState(false);  // Chart Builder — collapsed by default
+  const [bDim,   setBDim]   = useState("published_in");   // builder: primary dimension
+  const [bType,  setBType]  = useState("bar");            // builder: bar | trend | heatmap
+  const [bDim2,  setBDim2]  = useState("sdg");            // builder: 2nd dimension (heatmap)
+  const [bValue, setBValue] = useState("__all__");        // builder: value filter (trend)
   const [corpusTotal,           setCorpusTotal]           = useState(null);
   const analyticsEndRef = useRef(null);
 
@@ -753,13 +762,6 @@ export default function App() {
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
-  const [showFilters,       setShowFilters]       = useState(false);  // Semantic filters — collapsed by default
-  const [showExplorer,      setShowExplorer]      = useState(false);  // SDG Explorer — collapsed by default
-  const [showBuilder,       setShowBuilder]       = useState(false);  // Chart Builder — collapsed by default
-  const [bDim,   setBDim]   = useState("published_in");   // builder: primary dimension
-  const [bType,  setBType]  = useState("bar");            // builder: bar | trend | heatmap
-  const [bDim2,  setBDim2]  = useState("sdg");            // builder: 2nd dimension (heatmap)
-  const [bValue, setBValue] = useState("__all__");        // builder: value filter (trend)
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
