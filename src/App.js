@@ -583,6 +583,82 @@ function TrendLine({ data }) {
   );
 }
 
+// ── Chart Builder (any dimension × any chart type, over the same corpus data) ──
+
+const DIM_OPTIONS = [
+  { key: "sdg",  label: "SDG goal" },
+  ...BREAKDOWN_DIMS.map((d) => ({ key: d.key, label: d.label })),
+  { key: "year", label: "Year" },
+];
+
+// Unified value-getter across every corpus dimension.
+function getValues(row, dimKey) {
+  if (dimKey === "sdg")  return sdgLabelsOf(row);
+  if (dimKey === "year") { const y = yearOf(row); return y ? [y] : []; }
+  const d = BREAKDOWN_DIMS.find((x) => x.key === dimKey);
+  return d ? dimValuesOf(row, d) : [];
+}
+
+const dimLabel   = (key) => (DIM_OPTIONS.find((d) => d.key === key) || {}).label || key;
+const truncLabel = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
+
+// Cross-tabulate two dimensions → { rowLabels, colLabels, matrix, max }.
+function crossTab(rows, dimA, dimB, topN = 10, topM = 8) {
+  const rowLabels = countValues(rows, (r) => getValues(r, dimA)).slice(0, topN).map((x) => x[0]);
+  const colLabels = countValues(rows, (r) => getValues(r, dimB)).slice(0, topM).map((x) => x[0]);
+  const rIdx = new Map(rowLabels.map((l, i) => [l, i]));
+  const cIdx = new Map(colLabels.map((l, i) => [l, i]));
+  const matrix = rowLabels.map(() => colLabels.map(() => 0));
+  for (const r of rows) {
+    const as = getValues(r, dimA).filter((a) => rIdx.has(a));
+    const bs = getValues(r, dimB).filter((b) => cIdx.has(b));
+    for (const a of as) for (const b of bs) matrix[rIdx.get(a)][cIdx.get(b)] += 1;
+  }
+  const max = Math.max(1, ...matrix.flat());
+  return { rowLabels, colLabels, matrix, max };
+}
+
+// Sequential single-hue heatmap of a cross-tab (theme-safe; no categorical palette).
+function Heatmap({ rowLabels, colLabels, matrix, max }) {
+  if (!rowLabels || rowLabels.length === 0 || colLabels.length === 0)
+    return <p className="explorer-note">Not enough data for a cross-tab.</p>;
+  return (
+    <div className="heatmap-wrap">
+      <table className="heatmap">
+        <thead>
+          <tr>
+            <th className="heatmap-corner" />
+            {colLabels.map((c) => (
+              <th key={c} className="heatmap-colh" title={c}>{truncLabel(c, 14)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rowLabels.map((rl, i) => (
+            <tr key={rl}>
+              <th className="heatmap-rowh" title={rl}>{truncLabel(rl)}</th>
+              {colLabels.map((cl, j) => {
+                const v = matrix[i][j];
+                const a = v / max;
+                return (
+                  <td key={cl} className="heatmap-cell"
+                    title={`${rl} × ${cl}: ${v}`}
+                    style={{
+                      background: v ? `rgba(58,81,112,${(0.12 + 0.88 * a).toFixed(3)})` : "transparent",
+                      ...(a > 0.5 ? { color: "#fff" } : {}),
+                    }}>
+                    {v || ""}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -615,9 +691,9 @@ export default function App() {
     return hasUrl && useSemantic ? "semantic" : "keyword";
   });
 
-  // Load corpus metadata once, the first time the SDG Explorer is opened (lazy).
+  // Load corpus metadata once, the first time either analytics tool is opened (lazy).
   useEffect(() => {
-    if (!showExplorer || corpusRows || corpusLoading || !semanticUrl || !appKey) return;
+    if (!(showExplorer || showBuilder) || corpusRows || corpusLoading || !semanticUrl || !appKey) return;
     setCorpusLoading(true); setCorpusLoadErr("");
     fetch(siblingFnUrl(semanticUrl, "analytics"), {
       method:  "POST",
@@ -630,7 +706,12 @@ export default function App() {
       .then((d) => setCorpusRows(Array.isArray(d.rows) ? d.rows : []))
       .catch((e) => setCorpusLoadErr(e.message || "Could not load corpus data"))
       .finally(() => setCorpusLoading(false));
-  }, [showExplorer, corpusRows, corpusLoading, semanticUrl, appKey]);
+  }, [showExplorer, showBuilder, corpusRows, corpusLoading, semanticUrl, appKey]);
+
+  // Keep the heatmap's two dimensions distinct.
+  useEffect(() => {
+    if (bDim2 === bDim) setBDim2((DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key);
+  }, [bDim, bDim2]);
 
   const sdgDist    = useMemo(() => (corpusRows ? countValues(corpusRows, sdgLabelsOf) : []), [corpusRows]);
   const taggedCount = useMemo(
@@ -647,11 +728,38 @@ export default function App() {
     () => countValues(explSubset, (r) => { const y = yearOf(r); return y ? [y] : []; })
             .sort((a, b) => +a[0] - +b[0]),
     [explSubset]);
+
+  // ── Chart Builder aggregations ──
+  const builderBar = useMemo(
+    () => (corpusRows && bType === "bar"
+      ? countValues(corpusRows, (r) => getValues(r, bDim)).slice(0, 20) : []),
+    [corpusRows, bType, bDim]);
+  const builderValueOptions = useMemo(
+    () => (corpusRows
+      ? countValues(corpusRows, (r) => getValues(r, bDim)).slice(0, 40).map((x) => x[0]) : []),
+    [corpusRows, bDim]);
+  const builderTrend = useMemo(() => {
+    if (!corpusRows || bType !== "trend") return [];
+    const subset = bValue === "__all__" ? corpusRows
+      : corpusRows.filter((r) => getValues(r, bDim).includes(bValue));
+    return countValues(subset, (r) => { const y = yearOf(r); return y ? [y] : []; })
+             .sort((a, b) => +a[0] - +b[0]);
+  }, [corpusRows, bType, bDim, bValue]);
+  const builderHeat = useMemo(() => {
+    if (!corpusRows || bType !== "heatmap") return null;
+    const d2 = bDim2 !== bDim ? bDim2 : (DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key;
+    return crossTab(corpusRows, bDim, d2);
+  }, [corpusRows, bType, bDim, bDim2]);
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
   const [showFilters,       setShowFilters]       = useState(false);  // Semantic filters — collapsed by default
   const [showExplorer,      setShowExplorer]      = useState(false);  // SDG Explorer — collapsed by default
+  const [showBuilder,       setShowBuilder]       = useState(false);  // Chart Builder — collapsed by default
+  const [bDim,   setBDim]   = useState("published_in");   // builder: primary dimension
+  const [bType,  setBType]  = useState("bar");            // builder: bar | trend | heatmap
+  const [bDim2,  setBDim2]  = useState("sdg");            // builder: 2nd dimension (heatmap)
+  const [bValue, setBValue] = useState("__all__");        // builder: value filter (trend)
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -1653,6 +1761,68 @@ export default function App() {
                   <p><strong>Best for:</strong> Identifying trends over time, comparing journals, understanding the distribution of research approaches or artistic media across the whole RC.</p>
                   <p><strong>Follow-up questions:</strong> Ask a question, then refine or dig deeper — the conversation builds on previous answers without re-fetching statistics each time.</p>
                   <p><strong>Limitations:</strong> Works with metadata distributions only, not exposition content. Cannot find specific expositions, quote passages, or answer questions that require reading individual works. Statistics cover ~96% of expositions with extracted metadata.</p>
+                </div>
+              )}
+            </div>
+
+            {/* ── Chart Builder ── */}
+            <div className="chart-builder">
+              <button type="button" className="explorer-toggle" onClick={() => setShowBuilder(s => !s)}>
+                {showBuilder ? "▾ Hide Chart Builder" : "▸ Chart Builder"}
+              </button>
+              {showBuilder && (
+                <div className="explorer-body">
+                  {corpusLoading && <p className="answer-loading">Loading corpus data…</p>}
+                  {corpusLoadErr && <p className="answer-error">{corpusLoadErr}</p>}
+                  {corpusRows && corpusRows.length > 0 && (
+                    <>
+                      <div className="builder-controls">
+                        <label>Show
+                          <select value={bDim} onChange={(e) => setBDim(e.target.value)}>
+                            {DIM_OPTIONS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                          </select>
+                        </label>
+                        <label>as
+                          <select value={bType} onChange={(e) => setBType(e.target.value)}>
+                            <option value="bar">Bar chart</option>
+                            <option value="trend">Trend over time</option>
+                            <option value="heatmap">Cross-tab (heatmap)</option>
+                          </select>
+                        </label>
+                        {bType === "heatmap" && (
+                          <label>against
+                            <select value={bDim2} onChange={(e) => setBDim2(e.target.value)}>
+                              {DIM_OPTIONS.filter((d) => d.key !== bDim).map((d) =>
+                                <option key={d.key} value={d.key}>{d.label}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        {bType === "trend" && (
+                          <label>for
+                            <select value={bValue} onChange={(e) => setBValue(e.target.value)}>
+                              <option value="__all__">All values</option>
+                              {builderValueOptions.map((v) => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+
+                      <div className="builder-chart">
+                        {bType === "bar"     && <HBar data={builderBar} emptyNote="No data for this dimension." />}
+                        {bType === "trend"   && <TrendLine data={builderTrend} />}
+                        {bType === "heatmap" && builderHeat && <Heatmap {...builderHeat} />}
+                      </div>
+
+                      <p className="explorer-note">
+                        {bType === "bar" &&
+                          "Distribution across the selected dimension (top 20). Multi-valued dimensions count each value, so totals can exceed the number of expositions."}
+                        {bType === "trend" &&
+                          `Expositions per year${bValue !== "__all__" ? ` for “${bValue}”.` : "."}`}
+                        {bType === "heatmap" &&
+                          `Co-occurrence of ${dimLabel(bDim)} (rows) × ${dimLabel(bDim2 !== bDim ? bDim2 : "")} (columns) — darker = more expositions.`}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>

@@ -1829,3 +1829,38 @@ a:hover {
   .explorer-toggle:hover,
   .filter-section-toggle:hover { color: #9fbadf; }
 }
+
+/* ── Chart Builder ── */
+.chart-builder {
+  border: 1px solid #e2e2e2; background: #fafafa; padding: 16px 18px; margin-bottom: 18px;
+}
+.builder-controls {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 14px;
+}
+.builder-controls label {
+  font-size: 12px; color: #555; display: inline-flex; align-items: center; gap: 6px;
+}
+.builder-controls select {
+  font-size: 12px; padding: 3px 6px; border: 1px solid #ccc; background: #fff; color: #333;
+}
+.builder-chart { min-height: 40px; }
+
+.heatmap-wrap { overflow-x: auto; }
+.heatmap { border-collapse: collapse; font-size: 11px; }
+.heatmap th, .heatmap td { border: 1px solid #ececec; padding: 4px 7px; text-align: center; }
+.heatmap-corner { border: none; }
+.heatmap-colh { color: #555; font-weight: 400; white-space: nowrap; }
+.heatmap-rowh {
+  text-align: left; color: #444; font-weight: 400; white-space: nowrap;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+}
+.heatmap-cell { color: #444; min-width: 34px; font-variant-numeric: tabular-nums; }
+
+@media (prefers-color-scheme: dark) {
+  .chart-builder { background: #1a1a1a; border-color: #333; }
+  .builder-controls label { color: #bbb; }
+  .builder-controls select { background: #222; border-color: #444; color: #ddd; }
+  .heatmap th, .heatmap td { border-color: #2a2a2a; }
+  .heatmap-colh { color: #bbb; }
+  .heatmap-rowh, .heatmap-cell { color: #ccc; }
+}
