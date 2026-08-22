@@ -1809,3 +1809,23 @@ a:hover {
   .trend-line { stroke: #9fbadf; }
   .trend-dot { fill: #9fbadf; }
 }
+
+/* ── Collapsible toggles: Semantic filters + SDG Explorer ── */
+.explorer-toggle,
+.filter-section-toggle {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 4px;
+}
+.explorer-toggle       { font-size: 15px; font-weight: 700; color: #222; }
+.filter-section-toggle { font-weight: 700; color: #333; }
+.explorer-toggle:hover,
+.filter-section-toggle:hover { color: #3a5170; }
+.explorer-body { margin-top: 12px; }
+
+@media (prefers-color-scheme: dark) {
+  .explorer-toggle       { color: #eee; }
+  .filter-section-toggle { color: #ddd; }
+  .explorer-toggle:hover,
+  .filter-section-toggle:hover { color: #9fbadf; }
+}

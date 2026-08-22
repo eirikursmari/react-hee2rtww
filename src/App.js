@@ -615,9 +615,9 @@ export default function App() {
     return hasUrl && useSemantic ? "semantic" : "keyword";
   });
 
-  // Load corpus metadata once, the first time the Analytics tab is opened.
+  // Load corpus metadata once, the first time the SDG Explorer is opened (lazy).
   useEffect(() => {
-    if (activeTab !== "analytics" || corpusRows || corpusLoading || !semanticUrl || !appKey) return;
+    if (!showExplorer || corpusRows || corpusLoading || !semanticUrl || !appKey) return;
     setCorpusLoading(true); setCorpusLoadErr("");
     fetch(siblingFnUrl(semanticUrl, "analytics"), {
       method:  "POST",
@@ -630,7 +630,7 @@ export default function App() {
       .then((d) => setCorpusRows(Array.isArray(d.rows) ? d.rows : []))
       .catch((e) => setCorpusLoadErr(e.message || "Could not load corpus data"))
       .finally(() => setCorpusLoading(false));
-  }, [activeTab, corpusRows, corpusLoading, semanticUrl, appKey]);
+  }, [showExplorer, corpusRows, corpusLoading, semanticUrl, appKey]);
 
   const sdgDist    = useMemo(() => (corpusRows ? countValues(corpusRows, sdgLabelsOf) : []), [corpusRows]);
   const taggedCount = useMemo(
@@ -650,6 +650,8 @@ export default function App() {
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
+  const [showFilters,       setShowFilters]       = useState(false);  // Semantic filters — collapsed by default
+  const [showExplorer,      setShowExplorer]      = useState(false);  // SDG Explorer — collapsed by default
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -951,7 +953,7 @@ export default function App() {
     localStorage.setItem("rc_categories", JSON.stringify(updated));
   };
 
-  const applyCategory = (cat) => setFilters({ ...cat.filters });
+  const applyCategory = (cat) => { setFilters({ ...cat.filters }); setShowFilters(true); };
 
   const toggleCustomCat = (id) => {
     setActiveCustomCatIds(prev => {
@@ -1525,9 +1527,10 @@ export default function App() {
             <div className="filter-section">
               <div className="filter-section-header">
                 <div className="filter-section-left">
-                  <span className="filter-section-title">
-                    Filters{hasFilters && <span className="filter-active-count"> · {activeFilterCount} active</span>}
-                  </span>
+                  <button type="button" className="filter-section-toggle"
+                    onClick={() => setShowFilters(s => !s)}>
+                    {showFilters ? "▾" : "▸"} Filters{hasFilters && <span className="filter-active-count"> · {activeFilterCount} active</span>}
+                  </button>
                   {hasFilters && <button className="filter-clear-inline" onClick={clearFilters}>Clear all</button>}
                 </div>
                 {savedCategories.length > 0 && (
@@ -1542,6 +1545,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+              {showFilters && (
               <div className="filter-panel">
                 <p className="filter-panel-note">
                   Within a category results match <em>any</em> selected value; across categories all must match.
@@ -1631,6 +1635,7 @@ export default function App() {
                   )}
                 </div>
               </div>
+              )}
             </div>
           </div>
         )}
@@ -1654,15 +1659,18 @@ export default function App() {
 
             {/* ── SDG / Corpus Explorer ── */}
             <div className="sdg-explorer">
-              <div className="explorer-head">
-                <h3 className="explorer-title">SDG Explorer</h3>
-                {corpusRows && (
+              <button type="button" className="explorer-toggle"
+                onClick={() => setShowExplorer(s => !s)}>
+                {showExplorer ? "▾ Hide SDG Explorer" : "▸ SDG Explorer"}
+                {showExplorer && corpusRows && (
                   <span className="explorer-sub">
-                    {taggedCount.toLocaleString()} of {corpusRows.length.toLocaleString()} expositions carry an SDG label
+                    {" "}— {taggedCount.toLocaleString()} of {corpusRows.length.toLocaleString()} carry an SDG label
                   </span>
                 )}
-              </div>
+              </button>
 
+              {showExplorer && (
+              <div className="explorer-body">
               {corpusLoading && <p className="answer-loading">Loading corpus data…</p>}
               {corpusLoadErr && <p className="answer-error">{corpusLoadErr}</p>}
 
@@ -1707,6 +1715,8 @@ export default function App() {
                     <TrendLine data={trendData} />
                   </section>
                 </>
+              )}
+              </div>
               )}
             </div>
 
