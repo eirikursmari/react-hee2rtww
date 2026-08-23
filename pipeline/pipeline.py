@@ -324,13 +324,14 @@ def build_extraction_prompt(title: str, author: str, abstract: str, body: str,
 
 def extract_metadata(anthropic_client, title: str, author: str,
                      abstract: str, body: str,
-                     schema: Optional[dict] = None) -> Optional[dict]:
-    """Call Claude Haiku to extract structured metadata. Returns dict or None."""
+                     schema: Optional[dict] = None,
+                     model: Optional[str] = None) -> Optional[dict]:
+    """Call Claude to extract structured metadata. Returns dict or None."""
     system = schema.get("system_prompt", "") if schema else ""
     try:
         resp = anthropic_client.messages.create(
-            model=EXTRACTION_MODEL,
-            max_tokens=1024,
+            model=model or EXTRACTION_MODEL,
+            max_tokens=2000,
             system=system,
             messages=[{
                 "role": "user",
@@ -939,7 +940,12 @@ if __name__ == "__main__":
                     help="Fast pass: detect and store language for all expositions, no Claude calls")
     ap.add_argument("--classify-only", action="store_true",
                     help="Run all enabled external classifiers (reads config from Supabase pipeline_config)")
+    ap.add_argument("--model", metavar="ID",
+                    help="Override the extraction model (e.g. claude-sonnet-4-6, claude-opus-4-8)")
     args = ap.parse_args()
+    if args.model:
+        EXTRACTION_MODEL = args.model
+        log.info("Extraction model overridden → %s", EXTRACTION_MODEL)
     if args.portals_only:
         run_portals_only(limit=args.limit)
     elif args.language_only:

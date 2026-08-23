@@ -1,8 +1,8 @@
 {
-  "version": "1.0",
-  "description": "Extraction schema for RC research metadata. To add new dimensions, edit 'custom_dimensions' and re-run: python3 pipeline.py --extract-only --force",
+  "version": "2.0",
+  "description": "Extraction schema for RC research metadata (v2). Impact/relevance reworked: impact = kind of change (not pathway); evidence as an ordered ladder; scope split into geographic + domain; relevance via debates_addressed. Apply with: python3 pipeline.py --extract-only --force",
 
-  "system_prompt": "You are a research analyst specialising in artistic research. Extract structured metadata from exposition texts for the Research Catalogue (researchcatalogue.net).\n\nReturn ONLY a valid JSON object — no prose, no markdown fences. Use null for fields where the information is not present. Be conservative: only include what is explicitly stated or clearly demonstrated in the text.\n\nFor societal impact, carefully distinguish:\n- \"potential\" impact: what the artist intends or hopes to achieve beyond the artistic/research context.\n- \"actual\" impact: outcomes that are documented as having already occurred — partnerships formed, communities affected, events held, policy changes noted.",
+  "system_prompt": "You are a research analyst specialising in artistic research. Extract structured metadata from exposition texts for the Research Catalogue (researchcatalogue.net).\n\nReturn ONLY a valid JSON object — no prose, no markdown fences. Use null, or an empty array, wherever the information is not present. Be conservative: include only what is explicitly stated or clearly evidenced in the text; never infer beyond it.\n\nIMPACT is a KIND OF CHANGE the work produces — never the mechanism or site through which change happens. An exhibition, a workshop, 'community engagement', or a public-space setting are pathways, not impacts: classify the change they produce, not the pathway itself. Leave impact fields empty when the work makes no impact claim.\n\nDistinguish potential from actual impact:\n- potential: what the artist intends or hopes to achieve beyond the artistic/research context (not yet demonstrated).\n- actual: outcomes documented as having already occurred — partnerships formed, communities reached, events held, policy or practice changed.\n\nFor evidence level, record only the single strongest tier the text offers for its impact claims, on this ladder: asserted (claimed only) < documented (records exist: exhibitions, events, publications, press) < externally validated (peer review, citation, uptake, third-party testimony).",
 
   "array_dimensions": [
     {
@@ -41,33 +41,56 @@
       "key": "impact_types",
       "label": "Impact Type",
       "app_filter": true,
-      "app_tip": "Documented or intended societal impact beyond the immediate research context.",
-      "prompt": "Array. Choose from: community engagement, cultural preservation, environmental, social justice, health and wellbeing, education, cross-cultural dialogue, public space, policy influence, economic. Empty array if no societal impact dimension is present.",
-      "values": ["community engagement", "cultural preservation", "environmental", "social justice", "health and wellbeing", "education", "cross-cultural dialogue", "public space", "policy influence", "economic"]
+      "app_tip": "The kind(s) of change the work produces beyond making the work itself — not the pathway through which change happens.",
+      "prompt": "Array. The KIND(S) OF CHANGE the work produces — not the mechanism or site (an exhibition, workshop, or public-space setting is a pathway, not an impact). Choose all that clearly apply from: cultural preservation, environmental, social justice, health & wellbeing, education, cross-cultural dialogue, policy influence, economic, aesthetic / experiential, epistemic / methodological, pedagogical. Empty array if the work makes no impact claim.",
+      "values": ["cultural preservation", "environmental", "social justice", "health & wellbeing", "education", "cross-cultural dialogue", "policy influence", "economic", "aesthetic / experiential", "epistemic / methodological", "pedagogical"]
+    },
+    {
+      "key": "impact_evidence_level",
+      "label": "Evidence Level",
+      "app_filter": true,
+      "app_tip": "How strongly the work's impact claims are backed, from asserted to externally validated.",
+      "prompt": "Array with a SINGLE value: the strongest evidence tier the text offers for any impact claim, from: asserted (claimed only), documented (records exist: exhibitions, events, publications, press), externally validated (peer review, citation, uptake, third-party testimony). Empty array if no impact is claimed.",
+      "values": ["asserted", "documented", "externally validated"]
+    },
+    {
+      "key": "impact_scope_geographic",
+      "label": "Impact Scope — Geographic",
+      "app_filter": true,
+      "app_tip": "The broadest geographic reach the impact targets or achieves.",
+      "prompt": "Array. The broadest geographic reach(es) the impact targets or achieves, from: local, national, international. Empty array if unstated or no impact claim.",
+      "values": ["local", "national", "international"]
+    },
+    {
+      "key": "impact_scope_domain",
+      "label": "Impact Scope — Domain",
+      "app_filter": true,
+      "app_tip": "Whether the impact stays within art/research or reaches beyond the field.",
+      "prompt": "Array. Whether the impact is field-internal (within art / research) or societal (beyond the field). Both may apply. Empty array if no impact claim.",
+      "values": ["field-internal", "societal"]
     }
   ],
 
   "text_dimensions": [
-    { "key": "research_question",     "prompt": "String. The central research question, stated or clearly implied." },
-    { "key": "methods_described",     "prompt": "String. Brief summary of the methods or working processes used." },
-    { "key": "key_findings",          "prompt": "String. Key findings, contributions, or outcomes of the research." },
-    { "key": "materials_tools",       "prompt": "String. Notable materials, tools, or technologies used." },
-    { "key": "theoretical_refs",      "prompt": "String. Key theorists, artists, or works explicitly referenced." },
-    { "key": "impact_scope",          "prompt": "String. One of: local, regional, national, global. null if no societal impact is present." },
-    { "key": "impact_evidence_level", "prompt": "String. One of: stated_intent, demonstrated, externally_validated. Use the highest level that applies. null if no impact present." }
+    { "key": "research_question",  "prompt": "String. The central research question, stated or clearly implied." },
+    { "key": "methods_described",  "prompt": "String. Brief summary of the methods or working processes used." },
+    { "key": "key_findings",       "prompt": "String. Key findings, contributions, or outcomes of the research." },
+    { "key": "materials_tools",    "prompt": "String. Notable materials, tools, or technologies used." },
+    { "key": "theoretical_refs",   "prompt": "String. Key theorists, artists, or works explicitly referenced." },
+    { "key": "debates_addressed",  "prompt": "String. One or two sentences naming the intellectual or artistic debates, discourses, or questions the work positions itself within (its relevance to the wider field). null if not discernible." }
   ],
 
   "nested_dimensions": {
     "impact_potential": {
-      "prompt": "Potential societal impact — what the artist intends or hopes to achieve",
+      "prompt": "Potential impact — what the artist intends or hopes to achieve beyond the artistic/research context (not yet demonstrated).",
       "fields": {
         "beneficiaries": "intended communities or groups",
-        "goals":         "stated societal goals beyond the research context",
+        "goals":         "stated societal or artistic goals beyond the research context",
         "applications":  "proposed future uses or applications"
       }
     },
     "impact_actual": {
-      "prompt": "Actual documented societal impact — outcomes that have occurred",
+      "prompt": "Actual impact — outcomes documented as having already occurred.",
       "fields": {
         "outcomes":          "documented outcomes or effects that have occurred",
         "communities":       "communities or institutions actually reached",
