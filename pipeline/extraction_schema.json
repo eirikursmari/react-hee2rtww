@@ -54,14 +54,6 @@
       "values": ["asserted", "documented", "externally validated"]
     },
     {
-      "key": "impact_scope_geographic",
-      "label": "Impact Scope — Geographic",
-      "app_filter": true,
-      "app_tip": "The broadest geographic reach the impact targets or achieves.",
-      "prompt": "Array. ONLY when the work EXPLICITLY claims a geographic reach for its IMPACT (a named place, region, or scale it affects or aims to affect), choose from: local, national, international. Do NOT infer from where the artist is based or where the work was made or shown. Empty array if no geographic reach is explicitly claimed — this is the common case.",
-      "values": ["local", "national", "international"]
-    },
-    {
       "key": "impact_scope_domain",
       "label": "Impact Scope — Domain",
       "app_filter": true,

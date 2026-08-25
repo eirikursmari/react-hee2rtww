@@ -415,12 +415,19 @@ const FILTER_OPTIONS = [
       "process-based", "embodied", "relational", "site-specific",
     ]},
   { label: "Impact Type", key: "impact_types",
-    tip: "Documented or intended societal impact beyond the immediate research context.",
+    tip: "The kind(s) of change the work produces — not the pathway through which change happens.",
     values: [
-      "community engagement", "cultural preservation", "environmental",
-      "social justice", "health and wellbeing", "education",
-      "cross-cultural dialogue", "public space", "policy influence", "economic",
+      "cultural preservation", "environmental", "social justice",
+      "health & wellbeing", "education", "cross-cultural dialogue",
+      "policy influence", "economic", "aesthetic / experiential",
+      "epistemic / methodological", "pedagogical",
     ]},
+  { label: "Evidence Level", key: "impact_evidence_level",
+    tip: "How strongly the work's impact claims are backed: asserted → documented → externally validated.",
+    values: ["asserted", "documented", "externally validated"]},
+  { label: "Impact Scope", key: "impact_scope_domain",
+    tip: "Whether impact stays within art/research (field-internal) or reaches beyond it (societal).",
+    values: ["field-internal", "societal"]},
   { label: "Published In", key: "published_in",
     tip: "The RC portal or journal where the exposition was published.",
     values: [
@@ -490,6 +497,8 @@ const BREAKDOWN_DIMS = [
   { key: "methodological_framing", label: "Methodological framing", arr: true  },
   { key: "geographic_context",     label: "Geographic context",     arr: true  },
   { key: "impact_types",           label: "Impact type",            arr: true  },
+  { key: "impact_evidence_level",  label: "Evidence level",         arr: true  },
+  { key: "impact_scope_domain",    label: "Impact scope (domain)",  arr: true  },
   { key: "language",               label: "Language",               arr: false },
 ];
 

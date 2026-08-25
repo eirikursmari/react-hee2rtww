@@ -373,10 +373,10 @@ def _clean_impact_block(val) -> Optional[dict]:
 # ── Supabase writes ───────────────────────────────────────────────────────────
 
 STANDARD_ARRAY_KEYS = {"research_approach", "artistic_medium", "methodological_framing",
-                       "geographic_context", "impact_types"}
+                       "geographic_context", "impact_types",
+                       "impact_evidence_level", "impact_scope_domain"}
 STANDARD_TEXT_KEYS  = {"research_question", "methods_described", "key_findings",
-                       "materials_tools", "theoretical_refs", "impact_scope",
-                       "impact_evidence_level"}
+                       "materials_tools", "theoretical_refs", "debates_addressed"}
 STANDARD_NESTED_KEYS = {"impact_potential", "impact_actual"}
 
 
