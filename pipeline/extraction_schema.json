@@ -2,7 +2,7 @@
   "version": "2.0",
   "description": "Extraction schema for RC research metadata (v2). Impact/relevance reworked: impact = kind of change (not pathway); evidence as an ordered ladder; scope split into geographic + domain; relevance via debates_addressed. Apply with: python3 pipeline.py --extract-only --force",
 
-  "system_prompt": "You are a research analyst specialising in artistic research. Extract structured metadata from exposition texts for the Research Catalogue (researchcatalogue.net).\n\nReturn ONLY a valid JSON object — no prose, no markdown fences. Use null, or an empty array, wherever the information is not present. Be conservative: include only what is explicitly stated or clearly evidenced in the text; never infer beyond it.\n\nIMPACT is a KIND OF CHANGE the work produces — never the mechanism or site through which change happens. An exhibition, a workshop, 'community engagement', or a public-space setting are pathways, not impacts: classify the change they produce, not the pathway itself. Leave impact fields empty when the work makes no impact claim.\n\nDistinguish potential from actual impact:\n- potential: what the artist intends or hopes to achieve beyond the artistic/research context (not yet demonstrated).\n- actual: outcomes documented as having already occurred — partnerships formed, communities reached, events held, policy or practice changed.\n\nFor evidence level, record only the single strongest tier the text offers for its impact claims, on this ladder: asserted (claimed only) < documented (records exist: exhibitions, events, publications, press) < externally validated (peer review, citation, uptake, third-party testimony).",
+  "system_prompt": "You are a research analyst specialising in artistic research. Extract structured metadata from exposition texts for the Research Catalogue (researchcatalogue.net).\n\nReturn ONLY a valid JSON object — no prose, no markdown fences. Use null, or an empty array, wherever the information is not present. Be conservative: include only what is explicitly stated or clearly evidenced in the text; never infer beyond it.\n\nIMPACT is a KIND OF CHANGE the work produces — never the mechanism or site through which change happens. An exhibition, a workshop, 'community engagement', or a public-space setting are pathways, not impacts: classify the change they produce, not the pathway itself. Leave impact fields empty when the work makes no impact claim.\n\nDistinguish potential from actual impact:\n- potential: what the artist intends or hopes to achieve beyond the artistic/research context (not yet demonstrated).\n- actual: outcomes documented as having already occurred — partnerships formed, communities reached, events held, policy or practice changed.\n\nFor evidence level, record only the single strongest tier the text offers that the IMPACT ITSELF occurred — an exhibition or publication of the work is not, by itself, evidence of impact. Ladder: asserted (impact only claimed or hoped) < documented (specific evidence the impact occurred: reported outcomes, named communities or partners reached, recorded policy or practice change) < externally validated (independent confirmation: peer review, citation, uptake, third-party testimony).",
 
   "array_dimensions": [
     {
@@ -42,7 +42,7 @@
       "label": "Impact Type",
       "app_filter": true,
       "app_tip": "The kind(s) of change the work produces beyond making the work itself — not the pathway through which change happens.",
-      "prompt": "Array. The KIND(S) OF CHANGE the work produces — not the mechanism or site (an exhibition, workshop, or public-space setting is a pathway, not an impact). Choose all that clearly apply from: cultural preservation, environmental, social justice, health & wellbeing, education, cross-cultural dialogue, policy influence, economic, aesthetic / experiential, epistemic / methodological, pedagogical. Empty array if the work makes no impact claim.",
+      "prompt": "Array. The KIND(S) OF CHANGE the work produces — not the mechanism or site (an exhibition, workshop, or public-space setting is a pathway, not an impact). Choose all that clearly apply from: cultural preservation, environmental, social justice, health & wellbeing, education, cross-cultural dialogue, policy influence, economic, aesthetic / experiential, epistemic / methodological, pedagogical. Empty array if the work makes no impact claim. IMPORTANT: apply 'epistemic / methodological' ONLY when the work makes a DISTINCTIVE contribution to methods or ways of knowing — a new or notably reframed method, concept, or mode of inquiry that others could take up. Do NOT apply it merely because the work produces knowledge or reflects on its own practice (nearly all artistic research does that); if in doubt, leave it off.",
       "values": ["cultural preservation", "environmental", "social justice", "health & wellbeing", "education", "cross-cultural dialogue", "policy influence", "economic", "aesthetic / experiential", "epistemic / methodological", "pedagogical"]
     },
     {
@@ -50,7 +50,7 @@
       "label": "Evidence Level",
       "app_filter": true,
       "app_tip": "How strongly the work's impact claims are backed, from asserted to externally validated.",
-      "prompt": "Array with a SINGLE value: the strongest evidence tier the text offers for any impact claim, from: asserted (claimed only), documented (records exist: exhibitions, events, publications, press), externally validated (peer review, citation, uptake, third-party testimony). Empty array if no impact is claimed.",
+      "prompt": "Array with a SINGLE value: the strongest evidence the text offers THAT THE IMPACT ITSELF OCCURRED — not that the artwork exists, was made, or was exhibited. Tiers: asserted (the impact is only claimed or hoped for), documented (specific evidence the impact occurred — reported outcomes, named communities or partners actually reached, recorded policy or practice change), externally validated (independent confirmation of the impact: peer review, citation, uptake, or third-party testimony). Exhibiting or publishing the WORK is not, by itself, evidence of impact. Empty array if no impact is claimed.",
       "values": ["asserted", "documented", "externally validated"]
     },
     {
@@ -58,7 +58,7 @@
       "label": "Impact Scope — Geographic",
       "app_filter": true,
       "app_tip": "The broadest geographic reach the impact targets or achieves.",
-      "prompt": "Array. The broadest geographic reach(es) the impact targets or achieves, from: local, national, international. Empty array if unstated or no impact claim.",
+      "prompt": "Array. ONLY when the work EXPLICITLY claims a geographic reach for its IMPACT (a named place, region, or scale it affects or aims to affect), choose from: local, national, international. Do NOT infer from where the artist is based or where the work was made or shown. Empty array if no geographic reach is explicitly claimed — this is the common case.",
       "values": ["local", "national", "international"]
     },
     {
