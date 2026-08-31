@@ -601,26 +601,20 @@ def extract_only_exposition(sb: Client, expo: dict, anthropic_client,
              metadata.get("research_approach", []),
              metadata.get("impact_types", []))
 
-    # Update only the extracted fields, leave embeddings untouched
+    # Update only the extracted fields, leave embeddings untouched. Built from
+    # the schema key sets so the payload always matches the current schema
+    # (never hardcode columns here — that is how impact_scope drifted).
     update = {
-        "research_approach":      _clean_array(metadata.get("research_approach")),
-        "artistic_medium":        _clean_array(metadata.get("artistic_medium")),
-        "methodological_framing": _clean_array(metadata.get("methodological_framing")),
-        "geographic_context":     _clean_array(metadata.get("geographic_context")),
-        "research_question":      _clean_str(metadata.get("research_question")),
-        "methods_described":      _clean_str(metadata.get("methods_described")),
-        "key_findings":           _clean_str(metadata.get("key_findings")),
-        "materials_tools":        _clean_str(metadata.get("materials_tools")),
-        "theoretical_refs":       _clean_str(metadata.get("theoretical_refs")),
-        "impact_types":           _clean_array(metadata.get("impact_types")),
-        "impact_scope":           _clean_str(metadata.get("impact_scope")),
-        "impact_evidence_level":  _clean_str(metadata.get("impact_evidence_level")),
-        "impact_potential":       _clean_impact_block(metadata.get("impact_potential")),
-        "impact_actual":          _clean_impact_block(metadata.get("impact_actual")),
         "extracted_at": datetime.now(timezone.utc).isoformat(),
         "published_in": _parse_published_in(expo.get("published_in")),
         "language":     detect_language(expo.get("abstract") or expo.get("description") or expo.get("title") or ""),
     }
+    for k in STANDARD_ARRAY_KEYS:
+        update[k] = _clean_array(metadata.get(k))
+    for k in STANDARD_TEXT_KEYS:
+        update[k] = _clean_str(metadata.get(k))
+    for k in STANDARD_NESTED_KEYS:
+        update[k] = _clean_impact_block(metadata.get(k))
 
     # Custom dimensions → custom_metadata JSONB
     if schema:
