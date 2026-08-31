@@ -15,7 +15,7 @@ const CORS = {
 
 const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
                "methodological_framing,geographic_context,impact_types," +
-               "impact_evidence_level,impact_scope_domain,relevance_type,language," +
+               "impact_evidence_level,impact_scope_domain,fields_engaged,relevance_reach,language," +
                "custom_metadata,unavailable";
 
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {

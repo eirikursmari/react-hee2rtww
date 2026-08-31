@@ -1,12 +1,17 @@
--- Relevance axis migration (schema v2.2)
+-- Relevance axis migration (schema v2.3)
 -- Run in the Supabase SQL editor. Safe to re-run (idempotent).
 --
---   • relevance_type: new controlled array capturing HOW the work contributes to
---     the debates it engages (extends / challenges / reframes / bridges /
---     recovers). This is RELEVANCE — positioning in the field — and is separate
---     from impact; it carries NO evidence level.
+--   • relevance_type (v2.2) is REMOVED — it saturated (nearly every work got
+--     most values) and gave no analytical discrimination.
+--   • fields_engaged: controlled ~17-field taxonomy of the scholarly/artistic
+--     discourses a work substantively engages (its relevance to the wider
+--     intellectual landscape).
+--   • relevance_reach: mono- / cross- / transdisciplinary breadth.
 --
--- No change to match_exposition_chunks is needed: filtering reads relevance_type
+-- Both are RELEVANCE (positioning), separate from impact, and carry NO evidence
+-- level. No change to match_exposition_chunks is needed: filtering reads these
 -- via the search function's separate metadata fetch, not the RPC.
 
-ALTER TABLE expositions ADD COLUMN IF NOT EXISTS relevance_type TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE expositions DROP COLUMN IF EXISTS relevance_type;
+ALTER TABLE expositions ADD  COLUMN IF NOT EXISTS fields_engaged  TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE expositions ADD  COLUMN IF NOT EXISTS relevance_reach TEXT[] NOT NULL DEFAULT '{}';
