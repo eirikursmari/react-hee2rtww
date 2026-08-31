@@ -87,6 +87,32 @@ EMBED_BATCH      = 100
 EXTRACTION_MODEL = "claude-haiku-4-5-20251001"   # cheap + fast for batch extraction
 EXTRACT_TEXT_MAX = 6000  # chars of body text sent to Claude for extraction
 
+# ── Inclusion scope: peer-reviewed artistic-research journals ──────────────────
+# The corpus mixes full peer-reviewed expositions with MA-thesis PDF dumps,
+# conference documentation, and works-in-progress. For analysis we restrict to
+# expositions published in a peer-reviewed journal. Each venue is matched by a
+# DISTINCTIVE lowercase phrase against the exposition's `published_in` names, so
+# minor title variants ("(JAR)", punctuation) still match without false hits.
+PEER_REVIEWED_VENUE_PHRASES = [
+    "sonic studies",                              # Journal of Sonic Studies
+    "journal for artistic research",              # Journal for Artistic Research (JAR)
+    "ruukku",                                     # RUUKKU – Studies in Artistic Research
+    "nordic journal for artistic research",       # VIS – Nordic Journal for Artistic Research
+    "journal of research in art, design and society",  # HUB
+    "arteacta",                                   # ArteActa
+]
+
+def is_peer_reviewed(published_in) -> bool:
+    """True if any of the exposition's venue names is a peer-reviewed journal."""
+    if not published_in:
+        return False
+    names = published_in if isinstance(published_in, (list, tuple)) else [published_in]
+    for name in names:
+        low = (name or "").lower()
+        if any(phrase in low for phrase in PEER_REVIEWED_VENUE_PHRASES):
+            return True
+    return False
+
 # ── Clients ───────────────────────────────────────────────────────────────────
 
 def get_clients():
