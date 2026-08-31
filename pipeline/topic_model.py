@@ -48,6 +48,14 @@ EXTRA_STOPWORDS = [
     "exposition", "paper", "project", "study", "studies", "author", "article",
     "using", "based", "new", "way", "ways", "different", "within", "also",
     "paper", "essay", "explore", "explores", "question", "questions",
+    # RC page boilerplate that leaks in from abstracts / metadata
+    "accessible", "download", "pdf", "published", "catalogue", "http", "https",
+    # multilingual function words (Finnish/Swedish/Norwegian/Dutch/German) —
+    # the corpus is multilingual, so these top the keyword lists otherwise
+    "ja", "och", "att", "som", "det", "är", "en", "ett", "för", "av", "på",
+    "med", "till", "de", "den", "att", "om", "er", "og", "på", "the",
+    "het", "van", "een", "en", "und", "der", "die", "das", "ist", "im", "ein",
+    "eine", "för", "kuin", "mutta", "sekä", "tai", "joka", "sen", "voi",
 ]
 
 
@@ -97,10 +105,13 @@ def main():
     ap = argparse.ArgumentParser(description="Discover AR themes via BERTopic")
     ap.add_argument("--with-body", action="store_true",
                     help="Enrich each doc with the RC body excerpt (slower; richer topics)")
+    ap.add_argument("--k", type=int, default=20,
+                    help="KMeans clusters: a fixed number of balanced topics, no outlier pile "
+                         "(best for building a vocabulary). Use --k 0 for HDBSCAN density clustering.")
     ap.add_argument("--min-topic-size", type=int, default=12,
-                    help="Minimum docs per topic (smaller = more, finer topics)")
+                    help="HDBSCAN only (--k 0): minimum docs per topic (smaller = more, finer topics)")
     ap.add_argument("--nr-topics", default="auto",
-                    help="Reduce to this many topics after fit ('auto' or an int)")
+                    help="HDBSCAN only (--k 0): reduce to this many topics after fit ('auto' or an int)")
     ap.add_argument("--outdir", default="output")
     args = ap.parse_args()
 
@@ -132,15 +143,27 @@ def main():
     stop = list(CountVectorizer(stop_words="english").get_stop_words()) + EXTRA_STOPWORDS
     vectorizer = CountVectorizer(stop_words=stop, ngram_range=(1, 2), min_df=3)
 
-    nr = None if args.nr_topics == "auto" else int(args.nr_topics)
-    topic_model = BERTopic(
-        embedding_model=embedder,
-        vectorizer_model=vectorizer,
-        min_topic_size=args.min_topic_size,
-        nr_topics=nr,
-        calculate_probabilities=False,
-        verbose=True,
-    )
+    if args.k and args.k > 0:
+        from sklearn.cluster import KMeans
+        print(f"Clustering into {args.k} topics with KMeans (fixed count, no outliers)…")
+        topic_model = BERTopic(
+            embedding_model=embedder,
+            vectorizer_model=vectorizer,
+            hdbscan_model=KMeans(n_clusters=args.k, random_state=42, n_init=10),
+            calculate_probabilities=False,
+            verbose=True,
+        )
+    else:
+        nr = None if args.nr_topics == "auto" else int(args.nr_topics)
+        print("Clustering with HDBSCAN (density-based; may leave outliers)…")
+        topic_model = BERTopic(
+            embedding_model=embedder,
+            vectorizer_model=vectorizer,
+            min_topic_size=args.min_topic_size,
+            nr_topics=nr,
+            calculate_probabilities=False,
+            verbose=True,
+        )
     topics, _ = topic_model.fit_transform(texts, embeddings)
 
     info = topic_model.get_topic_info()          # includes the -1 outlier topic
