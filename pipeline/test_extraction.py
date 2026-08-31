@@ -51,7 +51,7 @@ from pipeline import (
 # The dimensions the prompt sharpenings target — shown for quick eyeballing.
 FOCUS = [
     "impact_types", "impact_evidence_level", "impact_scope_domain",
-    "fields_engaged", "relevance_reach", "debates_addressed",
+    "research_themes", "relevance_reach", "debates_addressed",
 ]
 
 
