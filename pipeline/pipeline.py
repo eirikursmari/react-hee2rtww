@@ -108,6 +108,8 @@ def is_peer_reviewed(published_in) -> bool:
         return False
     names = published_in if isinstance(published_in, (list, tuple)) else [published_in]
     for name in names:
+        if isinstance(name, dict):            # RC master-list form: {"name": ...}
+            name = name.get("name", "")
         low = (name or "").lower()
         if any(phrase in low for phrase in PEER_REVIEWED_VENUE_PHRASES):
             return True
@@ -882,7 +884,8 @@ def run_portals_only(limit: Optional[int] = None):
     log.info("Done — updated: %d  failed: %d", done, skipped)
 
 
-def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None):
+def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None,
+        peer_reviewed: bool = False):
     openai, sb, anthropic_client = get_clients()
     schema = load_schema(sb)
     log.info("Schema loaded — %d array + %d text + %d custom dimensions",
@@ -908,6 +911,11 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
     else:
         expositions = fetch_internal_research()
         log.info("Found %d expositions in master list", len(expositions))
+
+    if peer_reviewed:
+        before = len(expositions)
+        expositions = [e for e in expositions if is_peer_reviewed(e.get("published_in"))]
+        log.info("Peer-reviewed filter: %d → %d expositions", before, len(expositions))
 
     if limit:
         expositions = expositions[:limit]
@@ -969,6 +977,9 @@ if __name__ == "__main__":
                     help="Run all enabled external classifiers (reads config from Supabase pipeline_config)")
     ap.add_argument("--model", metavar="ID",
                     help="Override the extraction model (e.g. claude-sonnet-4-6, claude-opus-4-8)")
+    ap.add_argument("--peer-reviewed", action="store_true",
+                    help="Restrict to peer-reviewed journal expositions "
+                         "(the 6 venues in PEER_REVIEWED_VENUE_PHRASES; ~877 of the corpus)")
     args = ap.parse_args()
     if args.model:
         EXTRACTION_MODEL = args.model
@@ -980,4 +991,5 @@ if __name__ == "__main__":
     elif args.classify_only:
         run_classifiers(force=args.force, limit=args.limit)
     else:
-        run(force=args.force, extract_only=args.extract_only, limit=args.limit)
+        run(force=args.force, extract_only=args.extract_only, limit=args.limit,
+            peer_reviewed=args.peer_reviewed)

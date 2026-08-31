@@ -83,8 +83,8 @@ python3 pipeline/test_extraction.py --limit 8
 # Topic modelling (needs the venv: ~/bertopic-venv, CPU-only torch)
 ~/bertopic-venv/bin/python pipeline/topic_model.py
 
-# Full re-extraction (peer-reviewed flag NOT yet added — see Pending)
-python3 pipeline/pipeline.py --extract-only --force --model claude-sonnet-4-6
+# Full re-extraction, scoped to the 877 peer-reviewed expositions
+python3 pipeline/pipeline.py --extract-only --force --peer-reviewed --model claude-sonnet-4-6
 
 # Frontend
 CI=false npm run build
@@ -100,17 +100,16 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
    fields_engaged; adds research_themes + relevance_reach). "Success. No rows
    returned" is the expected result for these DDL batches.
 2. Redeploy the search function (reads the new filter columns).
-3. Full extraction with Sonnet — **only after the `--peer-reviewed` flag is
-   added** (see Pending), so it runs ~877 (~$20, <1h) not all 6,671 (~$150).
-   Use `nohup`/`screen`; needs all keys sourced.
+3. Full extraction with Sonnet, scoped by `--peer-reviewed` so it runs ~877
+   (~$20, <1h) not all 6,671 (~$150). Use `nohup`/`screen`; needs all keys
+   sourced:
+   `python3 pipeline/pipeline.py --extract-only --force --peer-reviewed --model claude-sonnet-4-6`
 4. Frontend auto-deploys via Pages; hard-refresh to see new filters/dims.
 
 ## Pending / open
 
-- **Add a `--peer-reviewed` flag to the extract path** in `pipeline.py` (reuse
-  `is_peer_reviewed`) — the extract-only path currently processes ALL
-  expositions; the flag scopes the full run to the 877. This is the last step
-  before the full run.
+- **Run the full re-extraction** — schema is finalised (v2.4) and the
+  `--peer-reviewed` flag is in; just execute the runbook above.
 - **Technical report** covering what's been built (later — this file is its seed).
 - Deferred: BERTopic prototype done for vocabulary; full multimodal rescue run;
   validation study.
