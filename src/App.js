@@ -428,6 +428,9 @@ const FILTER_OPTIONS = [
   { label: "Impact Scope", key: "impact_scope_domain",
     tip: "Whether impact stays within art/research (field-internal) or reaches beyond it (societal).",
     values: ["field-internal", "societal"]},
+  { label: "Relevance Type", key: "relevance_type",
+    tip: "How the work contributes to the debates it engages: extends, challenges, reframes, bridges, or recovers.",
+    values: ["extends", "challenges", "reframes", "bridges", "recovers"]},
   { label: "Published In", key: "published_in",
     tip: "The RC portal or journal where the exposition was published.",
     values: [
@@ -499,6 +502,7 @@ const BREAKDOWN_DIMS = [
   { key: "impact_types",           label: "Impact type",            arr: true  },
   { key: "impact_evidence_level",  label: "Evidence level",         arr: true  },
   { key: "impact_scope_domain",    label: "Impact scope (domain)",  arr: true  },
+  { key: "relevance_type",         label: "Relevance type",         arr: true  },
   { key: "language",               label: "Language",               arr: false },
 ];
 
