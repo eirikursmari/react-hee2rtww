@@ -283,32 +283,61 @@ Deno.serve(async (req) => {
       messages.push({ role: "user", content: question });
     }
 
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        system: `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation.
+    const system = `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation.
 
 SCOPE — two denominators, do not conflate them. Corpus-wide dimensions (published-in, research approach, medium, methodological framing, impact types, SDG labels, and the "EXPOSITIONS BY YEAR"/"IMPACT TYPES BY YEAR"/"SDG BY YEAR" trends) cover the whole corpus. research_themes and relevance_reach — including "RESEARCH THEMES BY YEAR", "RELEVANCE REACH BY YEAR", and "RESEARCH THEMES BY JOURNAL" — exist ONLY for the peer-reviewed subset, so compute their percentages against "PEER-REVIEWED EXPOSITIONS BY YEAR" (or the peer-reviewed total), never against the whole-corpus year totals. A theme-by-year breakdown IS available; use it directly rather than saying temporal theme data is missing.
 
-This is a conversation — build on your previous answers when relevant.`,
-        messages,
-      }),
-    });
+This is a conversation — build on your previous answers when relevant.`;
 
-    if (!claudeRes.ok) {
-      const e = await claudeRes.json().catch(() => ({}));
-      throw new Error("Claude " + claudeRes.status + ": " + (e.error?.message ?? claudeRes.statusText));
+    // Per-call output ceiling. High enough that most answers finish in one call;
+    // if a long analysis still hits the ceiling (stop_reason "max_tokens") we
+    // continue it automatically below rather than returning a half answer that
+    // the user has to nudge to finish.
+    const MAX_TOKENS = 8192;
+    const MAX_CONTINUATIONS = 3;
+
+    const callClaude = async (msgs: { role: string; content: string }[]) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, messages: msgs }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error("Claude " + res.status + ": " + (e.error?.message ?? res.statusText));
+      }
+      return res.json();
+    };
+
+    // Generate, and while the model stopped only because it ran out of output
+    // budget, feed its partial back and ask it to continue seamlessly. Text is
+    // concatenated with no separator so a mid-sentence/mid-word break rejoins
+    // cleanly. Guarded by MAX_CONTINUATIONS so a pathological case can't loop.
+    let convo = messages.slice();
+    let answer = "";
+    let stop = "max_tokens";
+    for (let i = 0; stop === "max_tokens" && i <= MAX_CONTINUATIONS; i++) {
+      const data = await callClaude(convo);
+      const text = (data.content ?? []).map((b: any) => b?.text ?? "").join("");
+      answer += text;
+      stop = data.stop_reason;
+      if (stop === "max_tokens") {
+        convo = [
+          ...convo,
+          { role: "assistant", content: text },
+          { role: "user", content: "Continue exactly where you left off. Do not repeat anything you have already written, and do not add any preamble." },
+        ];
+      }
     }
 
-    const answer = (await claudeRes.json()).content[0].text;
-    return Response.json({ answer, total: rows.length }, { headers: CORS });
+    return Response.json(
+      { answer, total: rows.length, truncated: stop === "max_tokens" },
+      { headers: CORS },
+    );
 
   } catch (err: any) {
     console.error(err);
