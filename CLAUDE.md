@@ -93,7 +93,7 @@ CI=false npm run build
 npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmralkmylmkeesblvj
 ```
 
-## Full re-extraction runbook (the pending big step)
+## Full re-extraction runbook (completed 2026-09-01; kept as reference)
 
 1. Run the DB migration(s) in the Supabase SQL editor — latest is
    `pipeline/supabase_migration_relevance.sql` (v2.4: drops relevance_type +
@@ -106,10 +106,20 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
    `python3 pipeline/pipeline.py --extract-only --force --peer-reviewed --model claude-sonnet-4-6`
 4. Frontend auto-deploys via Pages; hard-refresh to see new filters/dims.
 
+## Status
+
+- **Full re-extraction DONE** (v2.4, Sonnet, peer-reviewed): 888/889 have
+  `research_themes`, 887 `relevance_reach` (one journal home-page legitimately
+  empty). `analytics` + `search` edge functions redeployed; frontend on `main`
+  (auto-deploys to Pages). See `docs/worklog.md` for the day-by-day.
+- **Analytics scope caveat**: `impact_types` etc. are populated corpus-wide
+  (~3.6k rows) from an OLD v1 run, but `research_themes`/`relevance_reach` exist
+  only for the ~889 peer-reviewed (v2.4). So Corpus Analytics mixes whole-corpus
+  legacy dims with peer-reviewed-only new dims — mind the differing denominators
+  when charting. (A clean fix later: re-extract or clear the non-peer-reviewed rows.)
+
 ## Pending / open
 
-- **Run the full re-extraction** — schema is finalised (v2.4) and the
-  `--peer-reviewed` flag is in; just execute the runbook above.
 - **Technical report** covering what's been built (later — this file is its seed).
 - Deferred: BERTopic prototype done for vocabulary; full multimodal rescue run;
   validation study.
