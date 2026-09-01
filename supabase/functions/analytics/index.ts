@@ -18,6 +18,30 @@ const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
                "impact_evidence_level,impact_scope_domain,research_themes,relevance_reach,language," +
                "custom_metadata,unavailable";
 
+// Peer-reviewed scope — kept in sync with pipeline.PEER_REVIEWED_VENUE_PHRASES.
+// research_themes / relevance_reach were only extracted for these ~889 venues,
+// so any theme/reach trend must be computed and denominated over this subset.
+const PEER_REVIEWED_VENUE_PHRASES = [
+  "sonic studies",                              // Journal of Sonic Studies
+  "journal for artistic research",              // Journal for Artistic Research (JAR)
+  "ruukku",                                     // RUUKKU – Studies in Artistic Research
+  "nordic journal for artistic research",       // VIS – Nordic Journal for Artistic Research
+  "journal of research in art, design and society", // HUB
+  "arteacta",                                   // ArteActa
+];
+
+function isPeerReviewed(row: any): boolean {
+  const v = row?.published_in;
+  if (!v) return false;
+  const names = Array.isArray(v) ? v : [v];
+  for (let name of names) {
+    if (name && typeof name === "object") name = name.name ?? "";
+    const low = String(name || "").toLowerCase();
+    if (PEER_REVIEWED_VENUE_PHRASES.some((p) => low.includes(p))) return true;
+  }
+  return false;
+}
+
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {
   const PAGE = 1000;
   let all: any[] = [];
@@ -113,6 +137,61 @@ function buildStats(rows: any[]): string {
     return `  ${j}: ${top || "—"}`;
   }).join("\n");
 
+  // ── Peer-reviewed subset ──────────────────────────────────────────────────
+  // research_themes / relevance_reach exist ONLY for the peer-reviewed venues,
+  // so their distributions and trends are computed over this subset, with
+  // peer-reviewed year totals as the denominator (NOT the corpus-wide totals
+  // in EXPOSITIONS BY YEAR above).
+  const prRows  = rows.filter(isPeerReviewed);
+  const prTotal = prRows.length;
+  const prThemed = prRows.filter((r) => Array.isArray(r.research_themes) && r.research_themes.length > 0).length;
+
+  const prByYear: Record<string, any[]> = {};
+  for (const r of prRows) {
+    const y = extractYear(r.created_at || "");
+    if (y) { if (!prByYear[y]) prByYear[y] = []; prByYear[y].push(r); }
+  }
+  const prYearStr = Object.entries(prByYear).sort()
+    .map(([y, rs]) => `  ${y}: ${rs.length}`).join("\n");
+
+  // Research themes by year (the temporal view) — peer-reviewed only
+  const themeTrend = Object.entries(prByYear).sort()
+    .map(([y, rs]) => {
+      const top = dist(rs, "research_themes", true).slice(0, 6).map(([k, v]) => `${k}(${v})`).join(", ");
+      return `  ${y} (n=${rs.length}): ${top || "—"}`;
+    }).join("\n");
+
+  // Relevance reach by year — peer-reviewed only
+  const reachTrend = Object.entries(prByYear).sort()
+    .map(([y, rs]) => {
+      const top = dist(rs, "relevance_reach", true).map(([k, v]) => `${k}(${v})`).join(", ");
+      return `  ${y} (n=${rs.length}): ${top || "—"}`;
+    }).join("\n");
+
+  // Research themes by peer-reviewed journal
+  const prJournals = dist(prRows, "published_in", true).slice(0, 8).map(([k]) => k);
+  const themesByJournal = prJournals.map((j) => {
+    const jRows = prRows.filter((r) => Array.isArray(r.published_in) && r.published_in.includes(j));
+    const top = dist(jRows, "research_themes", true).slice(0, 8).map(([k, v]) => `${k}(${v})`).join(", ");
+    return `  ${j} (n=${jRows.length}): ${top || "—"}`;
+  }).join("\n");
+
+  const themesSection = `
+PEER-REVIEWED SUBSET: ${prTotal} expositions across the 6 peer-reviewed journals; ${prThemed} carry research_themes. research_themes and relevance_reach were extracted ONLY for this subset — every theme/reach figure below is out of these ${prTotal}, not the ${total}-exposition corpus.
+
+RESEARCH THEMES (peer-reviewed only; multi-label, counts exceed ${prTotal}):\n${fmt(dist(prRows, "research_themes", true), 20)}
+
+RELEVANCE REACH (peer-reviewed only):\n${fmt(dist(prRows, "relevance_reach", true), 10)}
+
+PEER-REVIEWED EXPOSITIONS BY YEAR (denominator for the theme/reach trends below):\n${prYearStr}
+
+RESEARCH THEMES BY YEAR (peer-reviewed only, top 6 per year):\n${themeTrend}
+
+RELEVANCE REACH BY YEAR (peer-reviewed only):\n${reachTrend}
+
+RESEARCH THEMES BY JOURNAL (peer-reviewed journals, top 8 per journal):\n${themesByJournal}
+`;
+
   const langSection = dist(rows, "language").length > 0
     ? `\nLANGUAGE:\n${fmt(dist(rows, "language"), 20)}\n` : "";
 
@@ -129,8 +208,8 @@ METHODOLOGICAL FRAMING:\n${fmt(dist(rows, "methodological_framing", true))}
 IMPACT TYPES:\n${fmt(dist(rows, "impact_types", true))}
 
 SDG LABELS — Aurora classifier (${sdgTagged} of ${total} expositions carry ≥1 goal; multi-label, so counts exceed that total):\n${fmt(dist(rows, "_sdg", true), 20)}
-${langSection}
-EXPOSITIONS BY YEAR:\n${yearStr}
+${themesSection}${langSection}
+EXPOSITIONS BY YEAR (whole corpus):\n${yearStr}
 
 IMPACT TYPES BY YEAR (top 5 per year):\n${impactTrend}
 
@@ -214,7 +293,11 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model,
         max_tokens: 2048,
-        system: `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation. This is a conversation — build on your previous answers when relevant.`,
+        system: `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation.
+
+SCOPE — two denominators, do not conflate them. Corpus-wide dimensions (published-in, research approach, medium, methodological framing, impact types, SDG labels, and the "EXPOSITIONS BY YEAR"/"IMPACT TYPES BY YEAR"/"SDG BY YEAR" trends) cover the whole corpus. research_themes and relevance_reach — including "RESEARCH THEMES BY YEAR", "RELEVANCE REACH BY YEAR", and "RESEARCH THEMES BY JOURNAL" — exist ONLY for the peer-reviewed subset, so compute their percentages against "PEER-REVIEWED EXPOSITIONS BY YEAR" (or the peer-reviewed total), never against the whole-corpus year totals. A theme-by-year breakdown IS available; use it directly rather than saying temporal theme data is missing.
+
+This is a conversation — build on your previous answers when relevant.`,
         messages,
       }),
     });
