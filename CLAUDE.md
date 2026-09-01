@@ -64,10 +64,15 @@ Extraction window is title + author + abstract[:800] + body[:6000]
   (under-calibrated) and Opus (over-strict) by two-model eyeball tests. Pass
   `--model claude-sonnet-4-6`. (`EXTRACTION_MODEL` default in code is still
   Haiku; the flag overrides it.)
-- **Analysis scope = peer-reviewed journals only** (~877 of 6,671, ~13%). Six
-  venues, matched by distinctive name-phrase in `pipeline.is_peer_reviewed()` /
-  `PEER_REVIEWED_VENUE_PHRASES`: Journal of Sonic Studies, Journal for Artistic
-  Research, RUUKKU, VIS, HUB, ArteActa.
+- **Analysis scope = peer-reviewed journals only** (889 of ~6,700, ~13%).
+  Matched by distinctive name-phrase in `pipeline.is_peer_reviewed()` /
+  `PEER_REVIEWED_VENUE_PHRASES` (mirrored in the analytics fn): Journal of Sonic
+  Studies, Journal for Artistic Research, RUUKKU, VIS, HUB, ArteActa — **plus
+  ARJAZZ – Journal for Artistic Research in Jazz** (5 expositions), which the
+  "journal for artistic research" phrase also matches. ARJAZZ is genuine
+  peer-reviewed AR and is **kept deliberately**, so the effective set is 7
+  journals / 889 expositions. (Stray university portals showing a few themed
+  rows are multi-`published_in` overlaps of the same expositions, not extras.)
 - **Relevance evolution**: relevance_type (saturated → useless) → fields_engaged
   (too academic) → **research_themes** (corpus-derived, current). See git log.
 - **SDG** classification (Aurora) exists across the corpus; SDG Explorer +

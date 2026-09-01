@@ -55,3 +55,17 @@ to `main` → Pages auto-deploy. Migrations run: `supabase_migration_relevance.s
 **Follow-ups noted:** analytics mixes whole-corpus legacy impact data with
 peer-reviewed-only new dims (differing denominators); technical report still to
 write; Supabase `service_role` key still unrotated.
+
+**Post-deploy testing (same day).** Two analytics gaps found and fixed while
+testing the live Q&A:
+- The Q&A "Analyse" path builds a separate stats summary (`buildStats`) that the
+  Chart Builder doesn't use — it never included the v2.4 dims, so Claude reported
+  it had no research-themes data. Added research_themes/relevance_reach/evidence/
+  scope + a themes-by-journal cross-tab + a scope note (peer-reviewed vs
+  whole-corpus base).
+- The themes-by-journal used the corpus-wide top-8 journals, dropping HUB and
+  ArteActa. Scoped it to all peer-reviewed journals via `isPeerReviewed()`.
+- Confirmed by SQL: all six journals extracted (ArteActa 24/24). The
+  "journal for artistic research" phrase also matches **ARJAZZ – Journal for
+  Artistic Research in Jazz** (5) — kept deliberately, so scope = 7 journals /
+  889. No false positives among other performing-arts portals (0 themed).
