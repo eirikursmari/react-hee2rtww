@@ -120,6 +120,24 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
   legacy dims with peer-reviewed-only new dims — mind the differing denominators
   when charting. (A clean fix later: re-extract or clear the non-peer-reviewed rows.)
 
+## Before 12 Sept 2026 (presentation) — remaining plan
+
+Full detail + feasibility in `docs/status-and-feasibility.md`. Short form:
+
+1. **Multimodal 50-exposition test** — expand image-description + OCR from 1 →
+   ~50 as the live demo (pipeline exists; scaled batch run). Highest-value build.
+2. **Analytics scope clean-up** — `impact_types` is corpus-wide (old v1 run) but
+   `research_themes`/`relevance_reach` are peer-reviewed-only; scope the
+   `analytics` fetch to peer-reviewed so charts share one basis. Decide before
+   charting impact live.
+3. **Ethics slide** — provenance, LLM-extraction risk + the conservative-design
+   mitigations, local-LLM as a presented option (not built). Content in the report.
+4. **Technical report** — fuller writeup; `docs/excavating-artistic-research-overview.md`
+   + `docs/worklog.md` are the raw material.
+5. **Rotate the Supabase `service_role` key** — timed deliberately before presenting.
+
+Deferred (post-talk): validation study; full multimodal rescue run.
+
 ## Pending / open
 
 - **Technical report** covering what's been built (later — this file is its seed).
