@@ -891,15 +891,21 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
         # Avoid the map.rcdata.org dependency — query Supabase directly for rows
         # that need extraction (no extracted_at, not marked unavailable).
         all_rows = fetch_all_expositions_from_db(
-            sb, "id,title,author,abstract,published_in,unavailable,extracted_at,research_approach"
+            sb, "id,title,author,abstract,published_in,unavailable,extracted_at,"
+                "research_approach,research_themes"
         )
         if force:
             expositions = all_rows
         else:
+            # "Needs extraction" = never extracted, OR extracted under an older
+            # schema that predates the current relevance axis (no research_themes).
+            # The latter matters when resuming after a schema upgrade: rows from a
+            # prior run carry an extracted_at but lack the new v2.x fields.
             expositions = [r for r in all_rows
                            if not r.get("unavailable") and (
                                r.get("extracted_at") is None or
-                               not r.get("research_approach")
+                               not r.get("research_approach") or
+                               not r.get("research_themes")
                            )]
         log.info("Found %d expositions needing extraction (from Supabase)", len(expositions))
     else:
