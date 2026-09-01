@@ -3,6 +3,67 @@
 Dated narrative of what changed and why. `CLAUDE.md` holds the distilled current
 state; this file holds the story. Newest entries at the top.
 
+## 2026-09-01 — Corpus Analytics: research-themes temporal view, truncation fix
+
+**The symptom.** Asking Corpus Analytics for a *temporal* analysis of research
+themes (scoped to the ~889 peer-reviewed) got a "the theme-by-year breakdown is
+not available" hedge, and long answers broke off mid-sentence, needing a manual
+"please continue".
+
+**Root cause — analytics never aggregated the theme dims.** The `analytics`
+edge function selected `research_themes` / `relevance_reach` into `FIELDS` but
+`buildStats()` built *no* distribution for them — no overall, no by-year, no
+by-journal. Only `impact_types` and SDG had by-year cross-tabs, all corpus-wide.
+So a temporal theme question had literally zero theme-with-time data, and the
+year totals the model saw were whole-corpus (6,722), not peer-reviewed — the two
+things the model's answer complained about. (Its earlier claim that themes
+existed "per journal" was a confabulation; nothing of the sort was in the stats.)
+
+**Fixes (all in `supabase/functions/analytics/index.ts`):**
+- Ported `PEER_REVIEWED_VENUE_PHRASES` + an `isPeerReviewed()` helper (kept in
+  sync with `pipeline.py`) and emitted, scoped to and denominated by the
+  peer-reviewed subset: research-themes and relevance-reach distributions,
+  **RESEARCH THEMES BY YEAR**, RELEVANCE REACH BY YEAR, PEER-REVIEWED
+  EXPOSITIONS BY YEAR (the denominator), and RESEARCH THEMES BY JOURNAL.
+- Rewrote the system prompt to separate the two denominators (corpus-wide
+  impact/SDG/year vs peer-reviewed-only theme/reach) so the model stops
+  conflating them, and to state that a theme-by-year breakdown *is* available.
+- **Truncation:** the Claude call was capped at `max_tokens: 2048` and took
+  `content[0].text` without checking `stop_reason`, so long analyses returned
+  half-finished. Raised the ceiling to 8192 and added auto-continuation — on
+  `stop_reason:"max_tokens"` feed the partial back and ask it to continue
+  seamlessly, concatenated with no separator, guarded by `MAX_CONTINUATIONS`.
+  Response now also carries a `truncated` flag.
+- Added a `mode:"stats"` diagnostic branch that returns the exact stats string
+  with no Anthropic call — for confirming which build is live.
+
+**Chart Builder parity (`src/App.js`).** Surfaced the same views client-side.
+Two correctness gaps fixed: `crossTab` took the top-N years by frequency,
+unordered, so a themes×year heatmap showed ~8 arbitrary non-chronological
+columns — year is now a temporal axis (every year, chronological); and
+charts over `research_themes` / `relevance_reach` (bar, trend, either heatmap
+axis) are now scoped to the peer-reviewed subset with a denominator note,
+instead of sitting against the whole-corpus base. Verified with a prod build.
+
+**Debugging note — the fix looked broken twice because the function wasn't
+deployed.** Edge functions don't auto-deploy (only the frontend does, via
+Pages), and the server's checkout was behind the branch, so early tests hit the
+old build. The `mode:"stats"` probe made this visible: `{"error":"question is
+required"}` = old build lacking the branch; once the checkout was synced and
+`analytics` redeployed, the stats showed a populated RESEARCH THEMES BY YEAR
+(2011–2026) and the app produced a real year × theme table with per-year
+percentages. Confirmed live.
+
+**Known wrinkle (left as-is).** RESEARCH THEMES BY JOURNAL lists 8 rows, not 6:
+a few peer-reviewed expositions are co-listed with non-PR portals (Konstfack
+n=6), and ARJAZZ (n=5) is caught by the `"journal for artistic research"`
+substring. The pipeline uses the identical phrase list, so the edge function and
+the extracted data *agree* — tightening it means realigning both together,
+deliberately, not as a drive-by. 5–6 of 889; negligible for trends.
+
+**Deploy state.** `analytics` edge function deployed and confirmed live; branch
+merged to `main` (frontend auto-deploys to Pages).
+
 ## 2026-09-01 — Impact/relevance schema finalised (v2.4) and full re-extraction run
 
 **Extraction quality tuning (eyeball-driven).** Ran two-model tests and a curated
