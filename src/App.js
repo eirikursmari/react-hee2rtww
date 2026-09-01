@@ -525,6 +525,24 @@ const sdgLabelsOf = (row) => {
   return Array.isArray(v) ? v.filter(Boolean) : [];
 };
 
+// research_themes / relevance_reach were extracted only for the peer-reviewed
+// venues (kept in sync with pipeline.PEER_REVIEWED_VENUE_PHRASES), so any chart
+// over those dimensions must be scoped to — and denominated by — that subset.
+const PEER_REVIEWED_VENUE_PHRASES = [
+  "sonic studies", "journal for artistic research", "ruukku",
+  "nordic journal for artistic research",
+  "journal of research in art, design and society", "arteacta",
+];
+const isPeerReviewedRow = (row) => {
+  const v = row?.published_in;
+  const names = Array.isArray(v) ? v : (v ? [v] : []);
+  return names.some((n) => {
+    const s = String(n && typeof n === "object" ? n.name || "" : n || "").toLowerCase();
+    return PEER_REVIEWED_VENUE_PHRASES.some((p) => s.includes(p));
+  });
+};
+const PR_ONLY_DIMS = new Set(["research_themes", "relevance_reach"]);
+
 const dimValuesOf = (row, dim) => {
   const v = row?.[dim.key];
   if (dim.arr) return Array.isArray(v) ? v.filter(Boolean) : [];
@@ -631,8 +649,16 @@ const truncLabel = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…"
 
 // Cross-tabulate two dimensions → { rowLabels, colLabels, matrix, max }.
 function crossTab(rows, dimA, dimB, topN = 10, topM = 8) {
-  const rowLabels = countValues(rows, (r) => getValues(r, dimA)).slice(0, topN).map((x) => x[0]);
-  const colLabels = countValues(rows, (r) => getValues(r, dimB)).slice(0, topM).map((x) => x[0]);
+  // Year is a temporal axis: show every year in chronological order rather than
+  // the top-N by frequency, so a themes×year cross-tab reads left→right in time.
+  const axisLabels = (dim, cap) => {
+    const counted = countValues(rows, (r) => getValues(r, dim));
+    return dim === "year"
+      ? counted.map((x) => x[0]).sort((a, b) => +a - +b)
+      : counted.slice(0, cap).map((x) => x[0]);
+  };
+  const rowLabels = axisLabels(dimA, topN);
+  const colLabels = axisLabels(dimB, topM);
   const rIdx = new Map(rowLabels.map((l, i) => [l, i]));
   const cIdx = new Map(colLabels.map((l, i) => [l, i]));
   const matrix = rowLabels.map(() => colLabels.map(() => 0));
@@ -766,26 +792,41 @@ export default function App() {
     [explSubset]);
 
   // ── Chart Builder aggregations ──
+  // Peer-reviewed subset — the only rows carrying research_themes / relevance_reach.
+  const peerReviewedRows = useMemo(
+    () => (corpusRows ? corpusRows.filter(isPeerReviewedRow) : []),
+    [corpusRows]);
+  // Charts over a peer-reviewed-only dimension are scoped to that subset so the
+  // per-year / per-journal denominators are honest (not sat against the whole
+  // corpus, whose theme fields are empty).
   const builderBar = useMemo(
-    () => (corpusRows && bType === "bar"
-      ? countValues(corpusRows, (r) => getValues(r, bDim)).slice(0, 20) : []),
-    [corpusRows, bType, bDim]);
+    () => {
+      if (!corpusRows || bType !== "bar") return [];
+      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+      return countValues(base, (r) => getValues(r, bDim)).slice(0, 20);
+    },
+    [corpusRows, peerReviewedRows, bType, bDim]);
   const builderValueOptions = useMemo(
-    () => (corpusRows
-      ? countValues(corpusRows, (r) => getValues(r, bDim)).slice(0, 40).map((x) => x[0]) : []),
-    [corpusRows, bDim]);
+    () => {
+      if (!corpusRows) return [];
+      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+      return countValues(base, (r) => getValues(r, bDim)).slice(0, 40).map((x) => x[0]);
+    },
+    [corpusRows, peerReviewedRows, bDim]);
   const builderTrend = useMemo(() => {
     if (!corpusRows || bType !== "trend") return [];
-    const subset = bValue === "__all__" ? corpusRows
-      : corpusRows.filter((r) => getValues(r, bDim).includes(bValue));
+    const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+    const subset = bValue === "__all__" ? base
+      : base.filter((r) => getValues(r, bDim).includes(bValue));
     return countValues(subset, (r) => { const y = yearOf(r); return y ? [y] : []; })
              .sort((a, b) => +a[0] - +b[0]);
-  }, [corpusRows, bType, bDim, bValue]);
+  }, [corpusRows, peerReviewedRows, bType, bDim, bValue]);
   const builderHeat = useMemo(() => {
     if (!corpusRows || bType !== "heatmap") return null;
     const d2 = bDim2 !== bDim ? bDim2 : (DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key;
-    return crossTab(corpusRows, bDim, d2);
-  }, [corpusRows, bType, bDim, bDim2]);
+    const base = (PR_ONLY_DIMS.has(bDim) || PR_ONLY_DIMS.has(d2)) ? peerReviewedRows : corpusRows;
+    return crossTab(base, bDim, d2);
+  }, [corpusRows, peerReviewedRows, bType, bDim, bDim2]);
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
@@ -1849,6 +1890,8 @@ export default function App() {
                           `Expositions per year${bValue !== "__all__" ? ` for “${bValue}”.` : "."}`}
                         {bType === "heatmap" &&
                           `Co-occurrence of ${dimLabel(bDim)} (rows) × ${dimLabel(bDim2 !== bDim ? bDim2 : "")} (columns) — darker = more expositions.`}
+                        {(PR_ONLY_DIMS.has(bDim) || (bType === "heatmap" && PR_ONLY_DIMS.has(bDim2))) &&
+                          ` Research themes and relevance reach were extracted for the ${peerReviewedRows.length.toLocaleString()} peer-reviewed expositions only, so this view is limited to that subset.`}
                       </p>
                     </>
                   )}
