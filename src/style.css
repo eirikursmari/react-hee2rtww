@@ -1864,3 +1864,72 @@ a:hover {
   .heatmap-colh { color: #bbb; }
   .heatmap-rowh, .heatmap-cell { color: #ccc; }
 }
+
+/* ── About / intro panel ── */
+.about-box {
+  margin: 4px 0 22px;
+  border: 1.5px solid #000;
+  background: #fff;
+}
+.about-toggle {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 16px;
+  background: #000; color: #fff;
+  border: none; cursor: pointer;
+  font-family: Georgia, serif;
+}
+.about-toggle-title { font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+.about-toggle-chev  { font-size: 10px; opacity: 0.8; }
+.about-content { padding: 16px 18px 18px; font-size: 13.5px; line-height: 1.65; }
+.about-lead { margin: 0 0 12px; color: #222; }
+.about-modes { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.about-modes li {
+  padding: 8px 12px; background: #f9f9f9; border-left: 3px solid #000; font-size: 13px;
+}
+.about-modes strong { font-weight: 700; }
+.about-mode-use { color: #666; }
+.about-note { margin: 0; font-size: 12px; color: #888; }
+.about-inline-q { font-style: italic; color: #444; }
+
+@media (prefers-color-scheme: dark) {
+  .about-box { border-color: #eee; background: #141414; }
+  .about-toggle { background: #eee; color: #111; }
+  .about-lead { color: #ccc; }
+  .about-modes li { background: #1a1a1a; border-left-color: #9fbadf; color: #ccc; }
+  .about-mode-use { color: #999; }
+  .about-note { color: #888; }
+  .about-inline-q { color: #bbb; }
+}
+
+/* ── Corpus Analytics scope selector ── */
+.analytics-scope {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 4px 0 16px; padding-bottom: 14px;
+  border-bottom: 1px solid #e2e2e2;
+}
+.analytics-scope-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #666;
+}
+.analytics-scope-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.scope-btn {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 5px 13px;
+  font-family: Georgia, serif; font-size: 13px;
+  background: #fff; border: 1px solid #bbb; cursor: pointer; color: #444;
+  transition: all 0.15s;
+}
+.scope-btn:hover { border-color: #000; color: #000; }
+.scope-btn-active { background: #000; border-color: #000; color: #fff; }
+.scope-btn-count { font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.analytics-scope-note { flex-basis: 100%; font-size: 12px; font-style: italic; color: #777; }
+
+@media (prefers-color-scheme: dark) {
+  .analytics-scope { border-bottom-color: #333; }
+  .analytics-scope-label { color: #aaa; }
+  .scope-btn { background: #222; border-color: #444; color: #ccc; }
+  .scope-btn:hover { border-color: #eee; color: #fff; }
+  .scope-btn-active { background: #eee; border-color: #eee; color: #111; }
+  .analytics-scope-note { color: #999; }
+}

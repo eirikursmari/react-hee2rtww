@@ -82,7 +82,11 @@ function fmt(data: [string, number][], n = 20): string {
   return data.slice(0, n).map(([k, v]) => `  ${k}: ${v}`).join("\n");
 }
 
-function buildStats(rows: any[]): string {
+function buildStats(rows: any[], scope = "all"): string {
+  // When scoped to a subset (currently the peer-reviewed journals) `rows` is
+  // already that subset, so every distribution below is computed and denominated
+  // over it — a single denominator, no whole-corpus/peer-reviewed split.
+  const scopedToPR = scope === "peer_reviewed";
   const total = rows.length;
   const hasMeta = (r: any) => Array.isArray(r.research_approach) && r.research_approach.length > 0;
   const extracted   = rows.filter(hasMeta).length;
@@ -142,7 +146,7 @@ function buildStats(rows: any[]): string {
   // so their distributions and trends are computed over this subset, with
   // peer-reviewed year totals as the denominator (NOT the corpus-wide totals
   // in EXPOSITIONS BY YEAR above).
-  const prRows  = rows.filter(isPeerReviewed);
+  const prRows  = scopedToPR ? rows : rows.filter(isPeerReviewed);
   const prTotal = prRows.length;
   const prThemed = prRows.filter((r) => Array.isArray(r.research_themes) && r.research_themes.length > 0).length;
 
@@ -176,7 +180,19 @@ function buildStats(rows: any[]): string {
     return `  ${j} (n=${jRows.length}): ${top || "—"}`;
   }).join("\n");
 
-  const themesSection = `
+  const themesSection = scopedToPR
+    ? `
+RESEARCH THEMES (multi-label, counts exceed ${total}):\n${fmt(dist(prRows, "research_themes", true), 20)}
+
+RELEVANCE REACH:\n${fmt(dist(prRows, "relevance_reach", true), 10)}
+
+RESEARCH THEMES BY YEAR (top 6 per year; denominators are EXPOSITIONS BY YEAR above):\n${themeTrend}
+
+RELEVANCE REACH BY YEAR:\n${reachTrend}
+
+RESEARCH THEMES BY JOURNAL (top 8 per journal):\n${themesByJournal}
+`
+    : `
 PEER-REVIEWED SUBSET: ${prTotal} expositions across the 6 peer-reviewed journals; ${prThemed} carry research_themes. research_themes and relevance_reach were extracted ONLY for this subset — every theme/reach figure below is out of these ${prTotal}, not the ${total}-exposition corpus.
 
 RESEARCH THEMES (peer-reviewed only; multi-label, counts exceed ${prTotal}):\n${fmt(dist(prRows, "research_themes", true), 20)}
@@ -195,7 +211,12 @@ RESEARCH THEMES BY JOURNAL (peer-reviewed journals, top 8 per journal):\n${theme
   const langSection = dist(rows, "language").length > 0
     ? `\nLANGUAGE:\n${fmt(dist(rows, "language"), 20)}\n` : "";
 
-  return `CORPUS: ${total} expositions (${extracted} with extracted metadata, ${unavailable} no longer available on RC so unextractable, ${pending} pending extraction)
+  const header = scopedToPR
+    ? `SCOPE: PEER-REVIEWED JOURNAL SUBSET ONLY — ${total} expositions across the 6 peer-reviewed journals (Journal for Artistic Research, RUUKKU, VIS, Journal of Sonic Studies, HUB, ArteActa). EVERY figure below is out of these ${total} (${extracted} carry extracted metadata). This is a subset of the full Research Catalogue; do not reference the wider corpus unless the question asks.`
+    : `CORPUS: ${total} expositions (${extracted} with extracted metadata, ${unavailable} no longer available on RC so unextractable, ${pending} pending extraction)`;
+  const yearHeading = scopedToPR ? "EXPOSITIONS BY YEAR (peer-reviewed subset)" : "EXPOSITIONS BY YEAR (whole corpus)";
+
+  return `${header}
 
 PUBLISHED IN:\n${fmt(dist(rows, "published_in", true), 30)}
 
@@ -209,7 +230,7 @@ IMPACT TYPES:\n${fmt(dist(rows, "impact_types", true))}
 
 SDG LABELS — Aurora classifier (${sdgTagged} of ${total} expositions carry ≥1 goal; multi-label, so counts exceed that total):\n${fmt(dist(rows, "_sdg", true), 20)}
 ${themesSection}${langSection}
-EXPOSITIONS BY YEAR (whole corpus):\n${yearStr}
+${yearHeading}:\n${yearStr}
 
 IMPACT TYPES BY YEAR (top 5 per year):\n${impactTrend}
 
@@ -260,7 +281,12 @@ Deno.serve(async (req) => {
   if (body?.mode === "stats") {
     try {
       const rows = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
-      return Response.json({ stats: buildStats(rows), total: rows.length }, { headers: CORS });
+      const scope = (body?.scope as string) || "all";
+      const scoped = scope === "peer_reviewed" ? rows.filter(isPeerReviewed) : rows;
+      return Response.json(
+        { stats: buildStats(scoped, scope), total: rows.length, scopedTotal: scoped.length, scope },
+        { headers: CORS },
+      );
     } catch (err: any) {
       return Response.json({ error: err.message ?? "Internal error" }, { status: 500, headers: CORS });
     }
@@ -274,11 +300,14 @@ Deno.serve(async (req) => {
   const question = (body?.question as string) || "";
   const model    = (body?.model as string) || "claude-sonnet-4-6";
   const history  = (body?.history as { q: string; a: string }[]) || [];
+  const scope    = (body?.scope as string) || "all";
   if (!question?.trim()) return Response.json({ error: "question is required" }, { status: 400, headers: CORS });
 
   try {
-    const rows  = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
-    const stats = buildStats(rows);
+    const rows       = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
+    const scopedRows = scope === "peer_reviewed" ? rows.filter(isPeerReviewed) : rows;
+    const scopedTotal = scopedRows.length;
+    const stats      = buildStats(scopedRows, scope);
 
     // Build messages — stats appear only in the first user message to avoid
     // repeating them for every follow-up (saves tokens, keeps context clean)
@@ -295,9 +324,17 @@ Deno.serve(async (req) => {
       messages.push({ role: "user", content: question });
     }
 
-    const system = `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${Math.round(rows.filter((r:any) => Array.isArray(r.research_approach) && r.research_approach.length).length / rows.length * 100)}% of expositions have extracted metadata), note the limitation.
+    const metaPct = Math.round(
+      scopedRows.filter((r: any) => Array.isArray(r.research_approach) && r.research_approach.length).length
+      / (scopedTotal || 1) * 100);
 
-SCOPE — two denominators, do not conflate them. Corpus-wide dimensions (published-in, research approach, medium, methodological framing, impact types, SDG labels, and the "EXPOSITIONS BY YEAR"/"IMPACT TYPES BY YEAR"/"SDG BY YEAR" trends) cover the whole corpus. research_themes and relevance_reach — including "RESEARCH THEMES BY YEAR", "RELEVANCE REACH BY YEAR", and "RESEARCH THEMES BY JOURNAL" — exist ONLY for the peer-reviewed subset, so compute their percentages against "PEER-REVIEWED EXPOSITIONS BY YEAR" (or the peer-reviewed total), never against the whole-corpus year totals. A theme-by-year breakdown IS available; use it directly rather than saying temporal theme data is missing.
+    const scopeParagraph = scope === "peer_reviewed"
+      ? `SCOPE — the entire analysis is restricted to the peer-reviewed journal subset (${scopedTotal} expositions across 6 journals). Every dimension — publication venue, research approach, medium, methodological framing, impact types, SDG labels, research themes, relevance reach, and all by-year and by-journal trends — is computed over these ${scopedTotal} expositions, so there is a SINGLE denominator: give every percentage out of ${scopedTotal}, or out of the relevant per-year total in "EXPOSITIONS BY YEAR". Do not compare against or reference the wider ~6,700-exposition corpus unless the user explicitly asks.`
+      : `SCOPE — two denominators, do not conflate them. Corpus-wide dimensions (published-in, research approach, medium, methodological framing, impact types, SDG labels, and the "EXPOSITIONS BY YEAR"/"IMPACT TYPES BY YEAR"/"SDG BY YEAR" trends) cover the whole corpus. research_themes and relevance_reach — including "RESEARCH THEMES BY YEAR", "RELEVANCE REACH BY YEAR", and "RESEARCH THEMES BY JOURNAL" — exist ONLY for the peer-reviewed subset, so compute their percentages against "PEER-REVIEWED EXPOSITIONS BY YEAR" (or the peer-reviewed total), never against the whole-corpus year totals. A theme-by-year breakdown IS available; use it directly rather than saying temporal theme data is missing.`;
+
+    const system = `You are a research analyst specialising in artistic research. You have aggregated statistics from the Research Catalogue (researchcatalogue.net), a platform hosting artistic research expositions. Use the statistics to answer the user's question analytically. Be specific — cite counts and percentages. Identify trends and patterns. Format your answer clearly using markdown headings and lists. Where data is incomplete (e.g. only ${metaPct}% of the expositions in scope have extracted metadata), note the limitation.
+
+${scopeParagraph}
 
 This is a conversation — build on your previous answers when relevant.`;
 
@@ -347,7 +384,7 @@ This is a conversation — build on your previous answers when relevant.`;
     }
 
     return Response.json(
-      { answer, total: rows.length, truncated: stop === "max_tokens" },
+      { answer, total: rows.length, scopedTotal, scope, truncated: stop === "max_tokens" },
       { headers: CORS },
     );
 
