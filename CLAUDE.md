@@ -24,10 +24,12 @@ here.
   `exposition_chunks` (embedded text, `source` tag), `pipeline_config`
   (filter_config etc.). Vector search via the `match_exposition_chunks` RPC.
 
-### Gotcha: the live search function is named `swift-processor`
-The app's semantic-search URL points at a function deployed under the name
-`swift-processor` (historical), now aligned to the `search` source. When
-deploying search changes, deploy the function the app actually calls.
+### Search function name
+The app's semantic-search URL is `…/functions/v1/search` (confirmed 2026-09-01
+from the app's Settings). Deploying the `search` function is correct; the app
+derives the analytics/media URLs from this one by swapping the last path
+segment. (Historically the app pointed at a `swift-processor` deployment — no
+longer; ignore that name.)
 
 ## Extraction schema (`pipeline/extraction_schema.json`) — current: **v2.4**
 
