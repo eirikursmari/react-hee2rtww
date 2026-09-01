@@ -18,6 +18,23 @@ const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
                "impact_evidence_level,impact_scope_domain,research_themes,relevance_reach,language," +
                "custom_metadata,unavailable";
 
+// The six peer-reviewed artistic-research journals — matched by a distinctive
+// lowercase phrase against published_in names (mirrors pipeline.is_peer_reviewed).
+const PEER_REVIEWED_VENUE_PHRASES = [
+  "sonic studies", "journal for artistic research", "ruukku",
+  "nordic journal for artistic research",
+  "journal of research in art, design and society", "arteacta",
+];
+function isPeerReviewed(publishedIn: any): boolean {
+  if (!Array.isArray(publishedIn)) return false;
+  return publishedIn.some((n) =>
+    PEER_REVIEWED_VENUE_PHRASES.some((p) => String(n || "").toLowerCase().includes(p)));
+}
+function isPeerVenue(name: string): boolean {
+  const low = String(name || "").toLowerCase();
+  return PEER_REVIEWED_VENUE_PHRASES.some((p) => low.includes(p));
+}
+
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {
   const PAGE = 1000;
   let all: any[] = [];
@@ -100,16 +117,20 @@ function buildStats(rows: any[]): string {
     return `  ${j}: ${top || "—"}`;
   }).join("\n");
 
-  // Research themes by journal (relevance axis; peer-reviewed only)
-  const themesByJournal = topJournals.map(j => {
-    const jRows = rows.filter(r => Array.isArray(r.published_in) && r.published_in.includes(j));
-    const top = dist(jRows, "research_themes", true).slice(0, 6).map(([k, v]) => `${k}(${v})`).join(", ");
-    return `  ${j}: ${top || "—"}`;
-  }).join("\n");
+  // Peer-reviewed subset — the v2.4 relevance/impact dims (research_themes etc.)
+  // exist only here. Use ALL peer-reviewed journals (not the corpus-wide top-8,
+  // which are dominated by non-peer-reviewed portals and drop HUB / ArteActa).
+  const peerRows     = rows.filter((r) => isPeerReviewed(r.published_in));
+  const themed       = peerRows.length;
+  const peerJournals = dist(peerRows, "published_in", true)
+    .map(([j]) => j).filter(isPeerVenue);
 
-  // Peer-reviewed base for the v2.4 relevance/impact dims (only these carry
-  // research_themes), so the model can state the right denominator.
-  const themed = rows.filter((r) => Array.isArray(r.research_themes) && r.research_themes.length > 0).length;
+  // Research themes by peer-reviewed journal (relevance axis)
+  const themesByJournal = peerJournals.map(j => {
+    const jRows = peerRows.filter(r => Array.isArray(r.published_in) && r.published_in.includes(j));
+    const top = dist(jRows, "research_themes", true).slice(0, 6).map(([k, v]) => `${k}(${v})`).join(", ");
+    return `  ${j} (${jRows.length} expositions): ${top || "—"}`;
+  }).join("\n");
 
   // SDG by year and by journal (same cross-tab shape as the impact/approach ones)
   const sdgTrend = Object.entries(byYear).sort()
@@ -159,7 +180,7 @@ SDG BY YEAR (top 5 per year):\n${sdgTrend}
 
 RESEARCH APPROACH BY JOURNAL (top 8 journals):\n${approachByJournal}
 
-RESEARCH THEMES BY JOURNAL (top 6 themes per top journal; peer-reviewed):\n${themesByJournal}
+RESEARCH THEMES BY PEER-REVIEWED JOURNAL (all ${peerJournals.length} peer-reviewed journals, ${themed} expositions; top 6 themes each):\n${themesByJournal}
 
 SDG BY JOURNAL (top 5 per top journal):\n${sdgByJournal}`;
 }
