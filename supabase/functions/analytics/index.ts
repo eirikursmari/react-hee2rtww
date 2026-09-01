@@ -254,6 +254,18 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Stats mode — return the exact aggregated stats string the model is given,
+  // with no Anthropic call. Diagnostic: lets you confirm which build is live
+  // (e.g. that the "RESEARCH THEMES BY YEAR" section is present and populated).
+  if (body?.mode === "stats") {
+    try {
+      const rows = await fetchAllExpositions(SUPABASE_URL, sbHeaders);
+      return Response.json({ stats: buildStats(rows), total: rows.length }, { headers: CORS });
+    } catch (err: any) {
+      return Response.json({ error: err.message ?? "Internal error" }, { status: 500, headers: CORS });
+    }
+  }
+
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     return Response.json({ error: "ANTHROPIC_API_KEY secret not set in this edge function" }, { status: 500, headers: CORS });
