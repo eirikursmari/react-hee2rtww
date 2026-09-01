@@ -7,9 +7,9 @@ const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
 const CORS_PROXY     = "https://corsproxy.io/?";
 
 const MODELS = [
-  { id: "claude-haiku-4-5-20251001", label: "Haiku",  note: "fastest · lowest cost" },
-  { id: "claude-sonnet-4-6",         label: "Sonnet", note: "balanced"              },
-  { id: "claude-opus-4-7",           label: "Opus",   note: "most capable"         },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5",  note: "fastest · lowest cost" },
+  { id: "claude-sonnet-4-6",         label: "Sonnet 4.6", note: "balanced"              },
+  { id: "claude-opus-4-7",           label: "Opus 4.7",   note: "most capable"         },
 ];
 const DEEP_LIMIT     = 5;
 const DEEP_TEXT_MAX  = 2500;
@@ -543,6 +543,15 @@ const isPeerReviewedRow = (row) => {
 };
 const PR_ONLY_DIMS = new Set(["research_themes", "relevance_reach"]);
 
+// Corpus Analytics scope — which slice of the database a question/chart is about.
+// `filter` (if present) selects the subset; every dimension is then computed and
+// denominated over that subset. `key` is sent to the analytics edge function so
+// the server-side stats use the same slice.
+const ANALYTICS_SCOPES = [
+  { key: "all",           label: "Whole corpus",           filter: null },
+  { key: "peer_reviewed", label: "Peer-reviewed journals", filter: isPeerReviewedRow },
+];
+
 const dimValuesOf = (row, dim) => {
   const v = row?.[dim.key];
   if (dim.arr) return Array.isArray(v) ? v.filter(Boolean) : [];
@@ -728,6 +737,7 @@ export default function App() {
   const [analyticsConversation, setAnalyticsConversation] = useState([]);
   const [analyticsLoading,      setAnalyticsLoading]      = useState(false);
   const [analyticsError,        setAnalyticsError]        = useState("");
+  const [analyticsScope,        setAnalyticsScope]        = useState(() => localStorage.getItem("rc_analytics_scope") || "all");
 
   // ── SDG / Corpus Explorer ──
   const [corpusRows,    setCorpusRows]    = useState(null);   // null = not loaded
@@ -775,13 +785,23 @@ export default function App() {
     if (bDim2 === bDim) setBDim2((DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key);
   }, [bDim, bDim2]);
 
-  const sdgDist    = useMemo(() => (corpusRows ? countValues(corpusRows, sdgLabelsOf) : []), [corpusRows]);
+  // Rows the analytics tab is currently about — the whole corpus, or a subset
+  // (e.g. the peer-reviewed journals) selected via the scope control. Every
+  // client-side chart and count below is computed over this slice.
+  const scopedRows = useMemo(() => {
+    if (!corpusRows) return null;
+    const sc = ANALYTICS_SCOPES.find((s) => s.key === analyticsScope);
+    return sc && sc.filter ? corpusRows.filter(sc.filter) : corpusRows;
+  }, [corpusRows, analyticsScope]);
+  const scopeIsSubset = analyticsScope !== "all";
+
+  const sdgDist    = useMemo(() => (scopedRows ? countValues(scopedRows, sdgLabelsOf) : []), [scopedRows]);
   const taggedCount = useMemo(
-    () => (corpusRows ? corpusRows.filter((r) => sdgLabelsOf(r).length).length : 0), [corpusRows]);
+    () => (scopedRows ? scopedRows.filter((r) => sdgLabelsOf(r).length).length : 0), [scopedRows]);
   const explSubset = useMemo(() => {
-    if (!corpusRows) return [];
-    return explSdg ? corpusRows.filter((r) => sdgLabelsOf(r).includes(explSdg)) : corpusRows;
-  }, [corpusRows, explSdg]);
+    if (!scopedRows) return [];
+    return explSdg ? scopedRows.filter((r) => sdgLabelsOf(r).includes(explSdg)) : scopedRows;
+  }, [scopedRows, explSdg]);
   const breakdownData = useMemo(() => {
     const dim = BREAKDOWN_DIMS.find((d) => d.key === explDim) || BREAKDOWN_DIMS[0];
     return countValues(explSubset, (r) => dimValuesOf(r, dim)).slice(0, 15);
@@ -801,35 +821,36 @@ export default function App() {
   // corpus, whose theme fields are empty).
   const builderBar = useMemo(
     () => {
-      if (!corpusRows || bType !== "bar") return [];
-      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+      if (!scopedRows || bType !== "bar") return [];
+      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
       return countValues(base, (r) => getValues(r, bDim)).slice(0, 20);
     },
-    [corpusRows, peerReviewedRows, bType, bDim]);
+    [scopedRows, peerReviewedRows, bType, bDim]);
   const builderValueOptions = useMemo(
     () => {
-      if (!corpusRows) return [];
-      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+      if (!scopedRows) return [];
+      const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
       return countValues(base, (r) => getValues(r, bDim)).slice(0, 40).map((x) => x[0]);
     },
-    [corpusRows, peerReviewedRows, bDim]);
+    [scopedRows, peerReviewedRows, bDim]);
   const builderTrend = useMemo(() => {
-    if (!corpusRows || bType !== "trend") return [];
-    const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : corpusRows;
+    if (!scopedRows || bType !== "trend") return [];
+    const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
     const subset = bValue === "__all__" ? base
       : base.filter((r) => getValues(r, bDim).includes(bValue));
     return countValues(subset, (r) => { const y = yearOf(r); return y ? [y] : []; })
              .sort((a, b) => +a[0] - +b[0]);
-  }, [corpusRows, peerReviewedRows, bType, bDim, bValue]);
+  }, [scopedRows, peerReviewedRows, bType, bDim, bValue]);
   const builderHeat = useMemo(() => {
-    if (!corpusRows || bType !== "heatmap") return null;
+    if (!scopedRows || bType !== "heatmap") return null;
     const d2 = bDim2 !== bDim ? bDim2 : (DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key;
-    const base = (PR_ONLY_DIMS.has(bDim) || PR_ONLY_DIMS.has(d2)) ? peerReviewedRows : corpusRows;
+    const base = (PR_ONLY_DIMS.has(bDim) || PR_ONLY_DIMS.has(d2)) ? peerReviewedRows : scopedRows;
     return crossTab(base, bDim, d2);
-  }, [corpusRows, peerReviewedRows, bType, bDim, bDim2]);
+  }, [scopedRows, peerReviewedRows, bType, bDim, bDim2]);
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
+  const [showAbout,         setShowAbout]         = useState(() => localStorage.getItem("rc_about_collapsed") !== "1");
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
   });
@@ -1035,7 +1056,7 @@ export default function App() {
       const res = await fetch(siblingFnUrl(semanticUrl, "analytics"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-app-key": appKey },
-        body: JSON.stringify({ question: currentQ, model: modelId, history: analyticsConversation }),
+        body: JSON.stringify({ question: currentQ, model: modelId, history: analyticsConversation, scope: analyticsScope }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
@@ -1620,6 +1641,56 @@ export default function App() {
       )}
 
       <main className="app-main">
+        {/* ── About / intro ────────────────────────────────────────── */}
+        <section className={`about-box${showAbout ? " about-box-open" : ""}`}>
+          <button
+            className="about-toggle"
+            onClick={() => {
+              const next = !showAbout;
+              setShowAbout(next);
+              localStorage.setItem("rc_about_collapsed", next ? "" : "1");
+            }}
+            aria-expanded={showAbout}
+          >
+            <span className="about-toggle-title">About this tool</span>
+            <span className="about-toggle-chev">{showAbout ? "▲" : "▼"}</span>
+          </button>
+          {showAbout && (
+            <div className="about-content">
+              <p className="about-lead">
+                A search-and-analysis interface to the <a href="https://www.researchcatalogue.net"
+                  target="_blank" rel="noopener noreferrer">Research Catalogue</a> — the international
+                repository of artistic research. It helps you find and study expositions by
+                <em> meaning</em>, not only by matching words, and to ask questions of the collection as a
+                whole. Artistic research resists the keyword: its vocabulary is unstable, multilingual, and
+                often makes its argument through practice rather than prose. These three approaches each
+                answer a different kind of question.
+              </p>
+              <ul className="about-modes">
+                <li>
+                  <strong>Keyword</strong> — matches exact terms in titles, abstracts and keyword fields.
+                  <span className="about-mode-use"> Use it when you know the word, author or title you are looking for.</span>
+                </li>
+                <li>
+                  <strong>Semantic</strong> — finds conceptually related expositions by meaning, across
+                  different vocabulary and languages, with filters for the extracted research dimensions.
+                  <span className="about-mode-use"> Use it to explore a theme or research question without knowing its exact terminology.</span>
+                </li>
+                <li>
+                  <strong>Corpus Analytics</strong> — asks analytical questions of the whole corpus, or a
+                  chosen subset such as the peer-reviewed journals: distributions, trends over time, and
+                  cross-tabulations.
+                  <span className="about-mode-use"> Use it for meta-questions about the field rather than individual works.</span>
+                </li>
+              </ul>
+              <p className="about-note">
+                Each tab has a <span className="about-inline-q">? How it works</span> panel with more detail.
+                Every AI-generated answer can be downloaded as Markdown.
+              </p>
+            </div>
+          )}
+        </section>
+
         {/* ── Tab bar ──────────────────────────────────────────────── */}
         <div className="tab-bar">
           <button className={`tab-btn${activeTab === "keyword" ? " tab-btn-active" : ""}`}
@@ -1683,11 +1754,11 @@ export default function App() {
               </button>
               {showInfoSemantic && (
                 <div className="info-content">
-                  <p><strong>What it does:</strong> Searches the full text of all expositions by meaning using vector embeddings. Finds conceptually related content even when different words are used.</p>
+                  <p><strong>What it does:</strong> Searches the full text of all expositions by meaning using vector embeddings. Finds conceptually related content even when different words are used, and reaches text and descriptions recovered from images.</p>
                   <p><strong>Best for:</strong> Broad conceptual questions, exploring a research area without knowing its specific terminology, finding thematically related work.</p>
-                  <p><strong>Filters:</strong> Narrow results by research approach, artistic medium, impact type, methodological framing, or journal. Results must match all selected categories; within a category any selected value matches. Save combinations as named presets.</p>
+                  <p><strong>Filters:</strong> Narrow results by research approach, artistic medium, methodological framing, impact type, evidence level, impact scope, research themes, relevance reach, or journal. Results must match all selected categories; within a category any selected value matches. Save combinations as named presets.</p>
                   <p><strong>Custom categories:</strong> Define your own semantic categories in plain language — the search engine finds expositions that match your description conceptually, not just by keyword.</p>
-                  <p><strong>Limitations:</strong> Requires the Supabase index to be configured. ~96% of expositions have extracted metadata; the remainder may be under-represented in filtered results.</p>
+                  <p><strong>Limitations:</strong> Requires the Supabase index to be configured. Extraction coverage is uneven: a large share of expositions carry the core dimensions, but the <em>research themes</em> and <em>relevance reach</em> filters were extracted only for the ~889 peer-reviewed expositions, so filtering on those narrows results to that subset.</p>
                 </div>
               )}
             </div>
@@ -1827,11 +1898,49 @@ export default function App() {
               </button>
               {showInfoAnalytics && (
                 <div className="info-content">
-                  <p><strong>What it does:</strong> Asks Claude analytical questions about the full corpus{corpusTotal ? ` (${corpusTotal.toLocaleString()} expositions)` : " (6,500+ expositions)"}. Claude reads aggregated statistics — distributions, trends, cross-tabulations across journals, years, and metadata dimensions — not individual works.</p>
-                  <p><strong>Best for:</strong> Identifying trends over time, comparing journals, understanding the distribution of research approaches or artistic media across the whole RC.</p>
+                  <p><strong>What it does:</strong> Asks Claude analytical questions about the corpus{corpusTotal ? ` (${corpusTotal.toLocaleString()} expositions indexed)` : " (6,500+ expositions)"}. Claude reads aggregated statistics — distributions, trends, cross-tabulations across journals, years, and metadata dimensions — not individual works.</p>
+                  <p><strong>Scope:</strong> Choose whether to analyse the whole corpus or only a subset — currently the ~889 peer-reviewed journal expositions. When a subset is chosen, every dimension (impact, medium, themes, reach, year and journal trends) is computed over that subset alone, with a single honest denominator.</p>
+                  <p><strong>Best for:</strong> Identifying trends over time, comparing journals, understanding the distribution of research approaches or artistic media across the whole RC or a chosen subset.</p>
                   <p><strong>Follow-up questions:</strong> Ask a question, then refine or dig deeper — the conversation builds on previous answers without re-fetching statistics each time.</p>
-                  <p><strong>Limitations:</strong> Works with metadata distributions only, not exposition content. Cannot find specific expositions, quote passages, or answer questions that require reading individual works. Statistics cover ~96% of expositions with extracted metadata.</p>
+                  <p><strong>Limitations:</strong> Works with metadata distributions only, not exposition content. Cannot find specific expositions, quote passages, or answer questions that require reading individual works. Coverage is uneven — the core dimensions span a large share of the corpus, while research themes and relevance reach exist only for the peer-reviewed subset — so mind which denominator a figure is out of.</p>
                 </div>
+              )}
+            </div>
+
+            {/* ── Scope selector ── */}
+            <div className="analytics-scope">
+              <span className="analytics-scope-label">Analysing</span>
+              <div className="analytics-scope-btns">
+                {ANALYTICS_SCOPES.map((s) => {
+                  const count = corpusRows
+                    ? (s.filter ? corpusRows.filter(s.filter).length : corpusRows.length)
+                    : null;
+                  return (
+                    <button
+                      key={s.key}
+                      type="button"
+                      className={`scope-btn${analyticsScope === s.key ? " scope-btn-active" : ""}`}
+                      onClick={() => {
+                        if (s.key === analyticsScope) return;
+                        setAnalyticsScope(s.key);
+                        localStorage.setItem("rc_analytics_scope", s.key);
+                        setExplSdg(null);
+                        setAnalyticsConversation([]); // denominators change — start a fresh thread
+                      }}
+                      title={s.filter
+                        ? "Restrict every question, chart and count to this subset"
+                        : "Analyse the entire indexed corpus"}
+                    >
+                      {s.label}
+                      {count != null && <span className="scope-btn-count">{count.toLocaleString()}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {scopeIsSubset && (
+                <span className="analytics-scope-note">
+                  Every question, chart and count is computed over this subset alone.
+                </span>
               )}
             </div>
 
@@ -1844,7 +1953,7 @@ export default function App() {
                 <div className="explorer-body">
                   {corpusLoading && <p className="answer-loading">Loading corpus data…</p>}
                   {corpusLoadErr && <p className="answer-error">{corpusLoadErr}</p>}
-                  {corpusRows && corpusRows.length > 0 && (
+                  {scopedRows && scopedRows.length > 0 && (
                     <>
                       <div className="builder-controls">
                         <label>Show
@@ -1890,7 +1999,7 @@ export default function App() {
                           `Expositions per year${bValue !== "__all__" ? ` for “${bValue}”.` : "."}`}
                         {bType === "heatmap" &&
                           `Co-occurrence of ${dimLabel(bDim)} (rows) × ${dimLabel(bDim2 !== bDim ? bDim2 : "")} (columns) — darker = more expositions.`}
-                        {(PR_ONLY_DIMS.has(bDim) || (bType === "heatmap" && PR_ONLY_DIMS.has(bDim2))) &&
+                        {!scopeIsSubset && (PR_ONLY_DIMS.has(bDim) || (bType === "heatmap" && PR_ONLY_DIMS.has(bDim2))) &&
                           ` Research themes and relevance reach were extracted for the ${peerReviewedRows.length.toLocaleString()} peer-reviewed expositions only, so this view is limited to that subset.`}
                       </p>
                     </>
@@ -1904,9 +2013,9 @@ export default function App() {
               <button type="button" className="explorer-toggle"
                 onClick={() => setShowExplorer(s => !s)}>
                 {showExplorer ? "▾ Hide SDG Explorer" : "▸ SDG Explorer"}
-                {showExplorer && corpusRows && (
+                {showExplorer && scopedRows && (
                   <span className="explorer-sub">
-                    {" "}— {taggedCount.toLocaleString()} of {corpusRows.length.toLocaleString()} carry an SDG label
+                    {" "}— {taggedCount.toLocaleString()} of {scopedRows.length.toLocaleString()} carry an SDG label
                   </span>
                 )}
               </button>
@@ -1916,7 +2025,7 @@ export default function App() {
               {corpusLoading && <p className="answer-loading">Loading corpus data…</p>}
               {corpusLoadErr && <p className="answer-error">{corpusLoadErr}</p>}
 
-              {corpusRows && corpusRows.length > 0 && (
+              {scopedRows && scopedRows.length > 0 && (
                 <>
                   <section className="explorer-section">
                     <h4 className="explorer-h">
@@ -1926,7 +2035,7 @@ export default function App() {
                     <HBar data={sdgDist} selectedKey={explSdg} onSelect={setExplSdg}
                       emptyNote="No SDG labels found — run the classifier first." />
                     <p className="explorer-note">
-                      {(corpusRows.length - taggedCount).toLocaleString()} expositions carry no SDG label (not about a goal).
+                      {(scopedRows.length - taggedCount).toLocaleString()} expositions carry no SDG label (not about a goal).
                       Each exposition may hold more than one goal, so bar counts sum to more than the number of tagged works.
                     </p>
                   </section>
