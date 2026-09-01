@@ -100,6 +100,17 @@ function buildStats(rows: any[]): string {
     return `  ${j}: ${top || "—"}`;
   }).join("\n");
 
+  // Research themes by journal (relevance axis; peer-reviewed only)
+  const themesByJournal = topJournals.map(j => {
+    const jRows = rows.filter(r => Array.isArray(r.published_in) && r.published_in.includes(j));
+    const top = dist(jRows, "research_themes", true).slice(0, 6).map(([k, v]) => `${k}(${v})`).join(", ");
+    return `  ${j}: ${top || "—"}`;
+  }).join("\n");
+
+  // Peer-reviewed base for the v2.4 relevance/impact dims (only these carry
+  // research_themes), so the model can state the right denominator.
+  const themed = rows.filter((r) => Array.isArray(r.research_themes) && r.research_themes.length > 0).length;
+
   // SDG by year and by journal (same cross-tab shape as the impact/approach ones)
   const sdgTrend = Object.entries(byYear).sort()
     .map(([y, rs]) => {
@@ -126,10 +137,20 @@ ARTISTIC MEDIUM:\n${fmt(dist(rows, "artistic_medium", true))}
 
 METHODOLOGICAL FRAMING:\n${fmt(dist(rows, "methodological_framing", true))}
 
-IMPACT TYPES:\n${fmt(dist(rows, "impact_types", true))}
+IMPACT TYPES (whole corpus; see SCOPE NOTE):\n${fmt(dist(rows, "impact_types", true))}
+
+RESEARCH THEMES — relevance axis, artistic-research concerns (${themed} peer-reviewed expositions; multi-label, so counts exceed that total):\n${fmt(dist(rows, "research_themes", true), 20)}
+
+RELEVANCE REACH (peer-reviewed; single value each):\n${fmt(dist(rows, "relevance_reach", true))}
+
+IMPACT EVIDENCE LEVEL (peer-reviewed):\n${fmt(dist(rows, "impact_evidence_level", true))}
+
+IMPACT SCOPE — DOMAIN (peer-reviewed):\n${fmt(dist(rows, "impact_scope_domain", true))}
 
 SDG LABELS — Aurora classifier (${sdgTagged} of ${total} expositions carry ≥1 goal; multi-label, so counts exceed that total):\n${fmt(dist(rows, "_sdg", true), 20)}
 ${langSection}
+SCOPE NOTE: research_themes, relevance_reach, impact_evidence_level and impact_scope_domain come from the v2.4 extraction and exist ONLY for the ${themed} peer-reviewed expositions. impact_types is populated corpus-wide (~${dist(rows, "impact_types", true).reduce((s, [, v]) => s + v, 0)} tags) from an older run, so it sits on a much larger base — never compare its raw counts directly against the peer-reviewed-only dimensions; use the matching denominator for each.
+
 EXPOSITIONS BY YEAR:\n${yearStr}
 
 IMPACT TYPES BY YEAR (top 5 per year):\n${impactTrend}
@@ -137,6 +158,8 @@ IMPACT TYPES BY YEAR (top 5 per year):\n${impactTrend}
 SDG BY YEAR (top 5 per year):\n${sdgTrend}
 
 RESEARCH APPROACH BY JOURNAL (top 8 journals):\n${approachByJournal}
+
+RESEARCH THEMES BY JOURNAL (top 6 themes per top journal; peer-reviewed):\n${themesByJournal}
 
 SDG BY JOURNAL (top 5 per top journal):\n${sdgByJournal}`;
 }
