@@ -3,6 +3,44 @@
 Dated narrative of what changed and why. `CLAUDE.md` holds the distilled current
 state; this file holds the story. Newest entries at the top.
 
+## 2026-09-02 — Multimodal micro-pilot (validated end-to-end)
+
+Validated the image pipeline (`rc_multimodal.py` → `load_multimodal.py`) end to
+end — inventory → vision describe/OCR → facet extract → embed/load → live
+semantic retrieval — before committing to a full rescue run.
+
+**Smoke test** (`--only 281999`): 8/8 images described faithfully; facets
+(sound art, field recording, site-specific, walking/site-based methods) extracted
+from the images *alone* for an exposition with no title in the DB, each tagged
+`modality_source=image` with verbatim evidence. ~$0.11.
+
+**Sample of 10** (`--sample 10 --ocr` → `output/multimodal_ocr.jsonl`): 10/10 ok,
+64 images described, **$1.26** (so ~$0.11–0.13/exposition at 8 images). Loaded
+8 expositions, 103 chunks, 64 media rows — 2 records had 0 *fetchable* images
+(external embeds, not RC-hosted) and contributed nothing, correctly skipped.
+
+**Anti-confabulation safeguard holding**: 7/10 records carry `illegible` markers
+— the vision step flags unreadable text rather than inventing it (overview §7).
+
+**Showcase / validated case = `2064153`** — Fabio Bonizzoni, *"With trumpets? The
+use of trumpets in Roman Sinfonie around 1700"*. OCR recovered the designed-in
+title-page text **and** a faithful transcription of a 1720 primary source
+(*Notizie Istoriche degli Arcadi Morti*, Roma, Stamperia di Antonio de Rossi — the
+Arcangelo Corelli biography), period Italian intact, incl. a "HARVARD JUL 2"
+library stamp. In-app: a semantic search surfaces it with the images +
+"Text in image" panel populated. Caveat: this exposition also has prose, so that
+hit matched on text; retrieval *only* possible via recovered text is cleanest on a
+text-sparse work (search e.g. "Vallemani" to isolate the image-text path, or a
+future `scope_rescue.py` rescue cohort).
+
+**Fix during the pilot**: `_images_described` was written per-record from a
+module-level counter that accumulates across expositions (hence nonsensical
+`38/0`); now derived per-record from the exposition's own `image_descriptions`.
+
+**Next**: `scope_rescue.py` (free) to size the text-sparse + image-bearing cohort
+and project a full-rescue cost from the ~$0.12/exposition calibration; look into
+the 2 non-fetchable-embed cases if image coverage matters.
+
 ## 2026-09-02 — Analytics subset scope, UI for sharing, and a pending-extraction top-up
 
 Ahead of sharing the app with colleagues (and before the multimodal test).

@@ -140,6 +140,11 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
   the never-extracted set the 2026-09-02 top-up cleared (228). Decide per-row
   whether they're legitimately thin or an old Haiku under-tag worth a Sonnet
   re-extract (would want a `--reextract-empty` targeting mode).
+- **Multimodal**: pipeline validated end-to-end via a 10-exposition micro-pilot
+  (2026-09-02) — describe/OCR → facet → embed → live search, ~$0.12/exposition
+  at 8 images; showcase recovery = exposition 2064153 (Corelli/Roman-trumpets,
+  text recovered from scanned title pages). Full rescue run still deferred: size
+  the cohort with `scope_rescue.py` first.
 - Deferred: BERTopic prototype done for vocabulary; full multimodal rescue run;
   validation study.
 - **Security**: the Supabase `service_role` key was pasted in chat earlier and
