@@ -32,10 +32,12 @@ here.
   generated about it. `exposition_media` is **display-only** (per-image
   description + OCR + thumbnail for the app panel), never embedded.
 
-### Gotcha: the live search function is named `swift-processor`
-The app's semantic-search URL points at a function deployed under the name
-`swift-processor` (historical), now aligned to the `search` source. When
-deploying search changes, deploy the function the app actually calls.
+### Search function name
+The app's semantic-search URL now points **directly at the `search` function**
+(`…/functions/v1/search`) — so deploy `search` for search changes:
+`npx supabase@latest functions deploy search --no-verify-jwt --project-ref tnxmralkmylmkeesblvj`.
+(Historically the live function was named `swift-processor`; the app was
+repointed to `search` in early Sept 2026 and that older name is now deprecated.)
 
 ## Extraction schema (`pipeline/extraction_schema.json`) — current: **v2.4**
 

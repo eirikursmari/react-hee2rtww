@@ -1440,7 +1440,7 @@ export default function App() {
               </label>
               <input className="settings-input" type="url" value={semanticUrl}
                 onChange={e => save("url", setSemanticUrl, "rc_semantic_url")(e.target.value)}
-                placeholder="https://your-project.supabase.co/functions/v1/swift-processor" spellCheck={false} />
+                placeholder="https://your-project.supabase.co/functions/v1/search" spellCheck={false} />
               <p className="settings-note">
                 Paste your Supabase edge function URL here. Enables the Semantic and Corpus Analytics tabs.
               </p>
