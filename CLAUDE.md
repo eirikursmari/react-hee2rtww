@@ -86,6 +86,10 @@ python3 pipeline/test_extraction.py --limit 8
 # Full re-extraction, scoped to the 877 peer-reviewed expositions
 python3 pipeline/pipeline.py --extract-only --force --peer-reviewed --model claude-sonnet-4-6
 
+# Top up ONLY never-extracted rows (no extracted_at) — not the broad resume
+# filter, which also re-does older-schema rows missing research_themes
+python3 pipeline/pipeline.py --extract-only --pending-only --model claude-sonnet-4-6
+
 # Frontend
 CI=false npm run build
 
@@ -112,15 +116,30 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
   `research_themes`, 887 `relevance_reach` (one journal home-page legitimately
   empty). `analytics` + `search` edge functions redeployed; frontend on `main`
   (auto-deploys to Pages). See `docs/worklog.md` for the day-by-day.
+- **Corpus Analytics subset scope** (2026-09-02): a **Whole corpus / Peer-reviewed
+  journals** selector scopes every question, chart, and count to the chosen slice
+  with a single denominator. Frontend `scopedRows` + scope-aware `buildStats(rows,
+  scope)` in `analytics/index.ts`; the peer-reviewed scope filters by *venue*
+  (`isPeerReviewed`), not by whether theme fields exist.
 - **Analytics scope caveat**: `impact_types` etc. are populated corpus-wide
-  (~3.6k rows) from an OLD v1 run, but `research_themes`/`relevance_reach` exist
-  only for the ~889 peer-reviewed (v2.4). So Corpus Analytics mixes whole-corpus
-  legacy dims with peer-reviewed-only new dims — mind the differing denominators
-  when charting. (A clean fix later: re-extract or clear the non-peer-reviewed rows.)
+  (~3.6k rows) from an OLD v1 run. `research_themes`/`relevance_reach` were v2.4
+  extractions: the ~889 peer-reviewed, **plus ~228 mostly-non-PR rows from the
+  2026-09-02 pending top-up**. So whole-corpus theme charts are partial (that
+  ~1.1k, not the full corpus) while impact/SDG span ~3.6k — mind the differing
+  denominators, or use the peer-reviewed scope for a clean one. (A clean fix
+  later: finish extracting or clear the remaining non-peer-reviewed rows.)
 
 ## Pending / open
 
-- **Technical report** covering what's been built (later — this file is its seed).
+- **Technical report** covering what's been built (later — this file is its seed;
+  `docs/status-and-feasibility.md` and `docs/excavating-artistic-research-overview.md`
+  are drafts toward it).
+- **~169 extracted-but-empty rows**: carry an `extracted_at` but an empty
+  `research_approach` (extracted before, returned nothing). They're the gap
+  between the analytics "pending" count (~397, keyed off `research_approach`) and
+  the never-extracted set the 2026-09-02 top-up cleared (228). Decide per-row
+  whether they're legitimately thin or an old Haiku under-tag worth a Sonnet
+  re-extract (would want a `--reextract-empty` targeting mode).
 - Deferred: BERTopic prototype done for vocabulary; full multimodal rescue run;
   validation study.
 - **Security**: the Supabase `service_role` key was pasted in chat earlier and
