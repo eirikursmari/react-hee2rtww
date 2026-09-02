@@ -3,6 +3,52 @@
 Dated narrative of what changed and why. `CLAUDE.md` holds the distilled current
 state; this file holds the story. Newest entries at the top.
 
+## 2026-09-02 — Analytics subset scope, UI for sharing, and a pending-extraction top-up
+
+Ahead of sharing the app with colleagues (and before the multimodal test).
+
+**Corpus Analytics — subset scope filter.** Added a **Whole corpus / Peer-reviewed
+journals** selector to the analytics tab. When a subset is chosen, *every*
+dimension — impact, medium, SDG, research themes, relevance reach, and all
+by-year / by-journal trends — is computed and denominated over that subset alone,
+so there is a single honest denominator instead of the whole-corpus-vs-peer-reviewed
+split. It threads through all three surfaces:
+- **Claude Q&A** — `analytics/index.ts` `buildStats(rows, scope)` and the system
+  prompt are now scope-aware; in peer-reviewed mode the two-denominator caveat
+  collapses into one. The function returns `scopedTotal` + `scope`; a `scope`
+  arg was also wired into the `mode:"stats"` probe.
+- **Chart Builder + SDG Explorer** — a client-side `scopedRows` memo filters
+  `corpusRows` by the selected scope; every count/chart/denominator follows.
+- Changing scope starts a fresh analytics thread (stats live only in the first
+  message, so an in-place switch would otherwise be silently ignored). Built so
+  more subsets are a one-line addition.
+
+**UI polish for a wider audience.** Collapsible **About** panel at the top
+(purpose + what each approach is good for; open by default, dismissal persisted).
+Model buttons now show versions (**Haiku 4.5 / Sonnet 4.6 / Opus 4.7**). Refreshed
+the (i) "How it works" panels: complete Semantic filter list and accurate two-tier
+extraction-coverage wording in place of the stale "~96%". Verified with a prod
+build; merged to `main` (PR #3) → Pages; `analytics` edge function redeployed.
+
+**Pending-extraction top-up (+228).** Corpus Analytics reported ~397 "pending".
+Root-caused the number: analytics defines pending as *no `research_approach`*,
+but the pipeline's `--extract-only` resume filter treats *any* row missing
+`research_themes` as needing work — which would have swept in the ~2,700 non-PR
+v1 rows (they have `research_approach` but not the v2.4 themes), turning a top-up
+into a near-full re-extraction.
+- Added **`--pending-only`** to `pipeline.py`: with `--extract-only`, it targets
+  *only* rows with no `extracted_at` (and not unavailable) — the genuinely
+  never-extracted set. That came to **228**, not 397; the ~169 gap is rows that
+  carry an `extracted_at` but an empty `research_approach` (extracted before,
+  returned nothing) — left as-is for now, a separate re-extract question.
+- Ran `--extract-only --pending-only --model claude-sonnet-4-6`: **228 processed
+  (5 test + 223), 0 failed** (~$6, extract-only so no embeddings). Rows that
+  404'd on RC were auto-marked `unavailable` rather than extracted.
+- Consequence: these ~228 (mostly non-peer-reviewed) now carry `research_themes` /
+  `relevance_reach` too. The peer-reviewed analytics scope is unaffected (it
+  filters by venue, not by whether themes exist); whole-corpus theme charts are
+  now a bit more populated. Denominator caveat in `CLAUDE.md` updated.
+
 ## 2026-09-01 — Corpus Analytics: research-themes temporal view, truncation fix
 
 **The symptom.** Asking Corpus Analytics for a *temporal* analysis of research

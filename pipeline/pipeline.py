@@ -879,7 +879,7 @@ def run_portals_only(limit: Optional[int] = None):
 
 
 def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = None,
-        peer_reviewed: bool = False):
+        peer_reviewed: bool = False, pending_only: bool = False):
     openai, sb, anthropic_client = get_clients()
     schema = load_schema(sb)
     log.info("Schema loaded — %d array + %d text + %d custom dimensions",
@@ -896,6 +896,14 @@ def run(force: bool = False, extract_only: bool = False, limit: Optional[int] = 
         )
         if force:
             expositions = all_rows
+        elif pending_only:
+            # Strictly the never-extracted rows (no extracted_at timestamp, not
+            # marked unavailable) — i.e. the "pending extraction" count reported
+            # by Corpus Analytics. Unlike the resume filter below this does NOT
+            # re-touch older-schema rows that already carry an extraction, so it
+            # adds only genuinely new expositions to the extracted set.
+            expositions = [r for r in all_rows
+                           if not r.get("unavailable") and r.get("extracted_at") is None]
         else:
             # "Needs extraction" = never extracted, OR extracted under an older
             # schema that predates the current relevance axis (no research_themes).
@@ -980,6 +988,10 @@ if __name__ == "__main__":
     ap.add_argument("--peer-reviewed", action="store_true",
                     help="Restrict to peer-reviewed journal expositions "
                          "(the 6 venues in PEER_REVIEWED_VENUE_PHRASES; ~877 of the corpus)")
+    ap.add_argument("--pending-only", action="store_true",
+                    help="With --extract-only: process ONLY never-extracted rows "
+                         "(no extracted_at, not unavailable) — the 'pending' count. "
+                         "Does not re-extract older-schema rows the resume filter would sweep in.")
     args = ap.parse_args()
     if args.model:
         EXTRACTION_MODEL = args.model
@@ -992,4 +1004,4 @@ if __name__ == "__main__":
         run_classifiers(force=args.force, limit=args.limit)
     else:
         run(force=args.force, extract_only=args.extract_only, limit=args.limit,
-            peer_reviewed=args.peer_reviewed)
+            peer_reviewed=args.peer_reviewed, pending_only=args.pending_only)
