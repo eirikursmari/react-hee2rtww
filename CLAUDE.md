@@ -23,6 +23,14 @@ here.
 - **Data** — `expositions` table (metadata + extracted dimensions),
   `exposition_chunks` (embedded text, `source` tag), `pipeline_config`
   (filter_config etc.). Vector search via the `match_exposition_chunks` RPC.
+- **What semantic search covers**: everything embedded in `exposition_chunks` —
+  prose (`source` = `text`/`abstract`) **plus** multimodal text: per-image
+  **descriptions** (`source=image`) and **OCR'd designed-in text**
+  (`source=image-text`), all via the same `text-embedding-3-small` index. So
+  descriptions *and* OCR are searchable. Retrieval is **text-mediated, not
+  visual** — no pixel/CLIP embedding; an image is found only through the text
+  generated about it. `exposition_media` is **display-only** (per-image
+  description + OCR + thumbnail for the app panel), never embedded.
 
 ### Gotcha: the live search function is named `swift-processor`
 The app's semantic-search URL points at a function deployed under the name

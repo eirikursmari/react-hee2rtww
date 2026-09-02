@@ -181,7 +181,32 @@ Deno.serve(async (req) => {
         similarity:  Math.round((r.blendedScore ?? r.similarity) * 1000) / 1000,
         matchedText: r.text,
         matchedSource: r.source ?? "text",
+        media_count: 0,
       }));
+
+    // Flag which results carry analysed multimodal content (per-image
+    // descriptions + recovered text), counting exposition_media rows, so the app
+    // can mark them at a glance instead of a per-card fetch. Non-fatal: if the
+    // table is absent or the query fails, media_count stays 0.
+    const mediaIds = results.map((r) => r.id).filter((v) => v != null);
+    if (mediaIds.length > 0) {
+      try {
+        const mr = await fetch(
+          SUPABASE_URL + "/rest/v1/exposition_media?select=exposition_id&exposition_id=in.(" +
+            mediaIds.join(",") + ")",
+          { headers: sbHeaders }
+        );
+        if (mr.ok) {
+          const rows = await mr.json();
+          const counts: Record<string, number> = {};
+          for (const row of rows) {
+            const k = String(row.exposition_id);
+            counts[k] = (counts[k] || 0) + 1;
+          }
+          for (const r of results) r.media_count = counts[String(r.id)] || 0;
+        }
+      } catch { /* leave media_count at 0 */ }
+    }
 
     return Response.json({ results }, { headers: CORS });
 

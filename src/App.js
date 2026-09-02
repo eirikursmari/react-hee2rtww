@@ -252,6 +252,15 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle, semanticUrl,
   const [mediaError,   setMediaError]   = useState("");
 
   const canLoadMedia = Boolean(semanticUrl && exp.id != null);
+  // Up-front multimodal indicator: the search function reports how many analysed
+  // images/recovered-text rows an exposition has. When that count is present we
+  // flag analysed works and hide the panel on works that have none; when it is
+  // absent (keyword results, or a search backend not yet redeployed) we fall
+  // back to the old always-available toggle.
+  const mediaCount      = exp.media_count;
+  const hasMediaInfo    = typeof mediaCount === "number";
+  const hasMedia        = hasMediaInfo && mediaCount > 0;
+  const showMediaToggle = canLoadMedia && (!hasMediaInfo || hasMedia);
 
   const toggleMedia = useCallback(async () => {
     const next = !showMedia;
@@ -303,6 +312,12 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle, semanticUrl,
               {src.icon} {src.label}
             </span>
           )}
+          {hasMedia && (
+            <span className="media-badge"
+              title={`Analysed — ${mediaCount} image${mediaCount !== 1 ? "s" : ""} described, with any text recovered from them`}>
+              📷 {mediaCount} analysed
+            </span>
+          )}
         </div>
         {abstract && (
           <p className="exp-abstract">
@@ -324,10 +339,12 @@ function ExpositionCard({ exp, index, semantic, selected, onToggle, semanticUrl,
             ))}
           </div>
         )}
-        {canLoadMedia && (
+        {showMediaToggle && (
           <div className="exp-media">
             <button type="button" className="exp-media-toggle" onClick={toggleMedia}>
-              {showMedia ? "▾ Hide images & recovered text" : "▸ Images & recovered text"}
+              {showMedia
+                ? "▾ Hide images & recovered text"
+                : `▸ Images & recovered text${hasMedia ? ` · ${mediaCount}` : ""}`}
             </button>
             {showMedia && (
               <div className="exp-media-panel">
