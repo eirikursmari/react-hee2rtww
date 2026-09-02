@@ -22,7 +22,7 @@ Maturity labels: **Done** (built, deployed, verified) · **Working, with caveats
 | Component | State | Notes |
 |---|---|---|
 | Frontend (CRA → GitHub Pages) | **Done** | Live at base path `/react-hee2rtww/`; auto-deploys from `main`. |
-| Edge functions (search, analytics, claude, media, schema-builder, rc-proxy) | **Done** | All deployed `--no-verify-jwt`. Remember the live search fn is named `swift-processor`. |
+| Edge functions (search, analytics, claude, media, schema-builder, rc-proxy) | **Done** | All deployed `--no-verify-jwt`. The app now calls `search` directly (repointed from the historical `swift-processor`). |
 | Data store (Postgres + pgvector) | **Done** | `expositions`, `exposition_chunks`, `pipeline_config`; `match_exposition_chunks` RPC. |
 | Extraction pipeline (v2.4, Sonnet) | **Done** | Full peer-reviewed re-extraction complete: 888/889 have `research_themes`, 887 `relevance_reach`. |
 | Two-axis schema (Impact / Relevance) | **Done** | Finalised at v2.4 after three relevance iterations; migration run. |
