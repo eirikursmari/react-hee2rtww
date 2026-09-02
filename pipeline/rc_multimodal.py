@@ -788,7 +788,11 @@ def main() -> None:
                 "facets":              merged_facets,
                 "uncontrolled_terms":  merged_unctrl,
                 "_images_attempted":   len(candidates),
-                "_images_described":   images_described,
+                # Per-record count from this exposition's own results — NOT the
+                # module-level `images_described`, which is a running total across
+                # all expositions (used only for the final summary line).
+                "_images_described":   sum(1 for d in image_descs
+                                           if d.get("media_status") == "described"),
                 "_usage_per_image":    per_img_usage,
             }
             out_f.write(json.dumps(out_rec, ensure_ascii=False) + "\n")
