@@ -38,6 +38,8 @@ The app's semantic-search URL now points **directly at the `search` function**
 `npx supabase@latest functions deploy search --no-verify-jwt --project-ref tnxmralkmylmkeesblvj`.
 (Historically the live function was named `swift-processor`; the app was
 repointed to `search` in early Sept 2026 and that older name is now deprecated.)
+Each result also carries `media_count` (count of `exposition_media` rows for
+that exposition), so the app flags works with analysed images/recovered text.
 
 ## Extraction schema (`pipeline/extraction_schema.json`) — current: **v2.4**
 
