@@ -1640,6 +1640,16 @@ a:hover {
   color: #3a5170;
 }
 
+.media-badge {
+  margin-left: 8px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid #c2cbb4;
+  background: #f3f6ec;
+  color: #566b3a;
+  white-space: nowrap;
+}
+
 .exp-media {
   margin-top: 10px;
 }
@@ -1711,6 +1721,7 @@ a:hover {
 
 @media (prefers-color-scheme: dark) {
   .match-source-badge { border-color: #3a4a5c; background: #1b2531; color: #9fbadf; }
+  .media-badge { border-color: #414c33; background: #1e2417; color: #a9bf86; }
   .exp-media-toggle, .ocr-label { color: #9fbadf; }
   .exp-media-panel { border-left-color: #3a4a5c; }
   .exp-media-item { background: #1a1a1a; border-color: #333; }
