@@ -621,6 +621,25 @@ a:hover {
   margin-top: 6px;
 }
 
+.lens-presets {
+  margin-top: 8px;
+}
+
+.lens-presets-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #888;
+  margin-bottom: 5px;
+  cursor: help;
+}
+
+.lens-preset-chip {
+  border-style: dashed;
+  color: #555;
+}
+
 .custom-cat-desc {
   font-size: 13px;
   padding: 7px 9px;
