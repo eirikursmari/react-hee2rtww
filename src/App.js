@@ -15,6 +15,36 @@ const DEEP_LIMIT     = 5;
 const DEEP_TEXT_MAX  = 2500;
 const EXPO_TEXT_MAX  = 8000;
 
+// ── Lens presets ──────────────────────────────────────────────────────────────
+// The ten reflective "lenses" from the RC / COST Action "Artistic Intelligence"
+// Training School (exposition 4667244, Daniele Pozzi). Each is a cross-cutting
+// reading position, offered here as a ready-made semantic re-ranker. The original
+// second-person workshop question is kept for the tooltip; the `description` is
+// rewritten declaratively so it embeds well against third-person exposition prose.
+// Clicking a preset adds it as a normal custom category (persisted, deletable).
+const LENS_PRESETS = [
+  { name: "Resonance",   question: "What in your practice begins to vibrate when it encounters the work of others, and how do you recognize that resonance before you can name it?",
+    description: "Resonance, affinity, and sympathetic vibration between practices — moments where a work is affected or influenced by encountering another's, and intuitive, pre-verbal recognition that precedes analysis. Attunement, echo, being moved, felt connection, and influence sensed before it can be named." },
+  { name: "Ambiguity",   question: "Where does uncertainty become productive in your artistic research, and what forms of knowledge emerge when you resist the urge to clarify?",
+    description: "Uncertainty, ambiguity, and not-knowing treated as productive — indeterminacy, open-endedness, and the refusal to resolve or clarify as a source of knowledge. Doubt, the unresolved, the provisional, negative capability, and epistemologies that value opacity over explanation." },
+  { name: "Locality",    question: "What places, contexts, or communities quietly shape your practice, and how might your work change if it were rooted elsewhere?",
+    description: "Place, locality, and situated context — the specific sites, regions, communities, and local conditions that ground a practice. Situatedness, rootedness, the local and the vernacular, and meaning that depends on where and among whom a work is made." },
+  { name: "Transfer",    question: "When something from your practice travels into another context, what transforms, what remains, and what is lost along the way?",
+    description: "Transfer, translation, and movement between contexts — how methods, materials, or ideas travel from one setting to another and what transforms, persists, or is lost in transit. Circulation, adaptation, recontextualization, migration of practices, and gain and loss through transposition." },
+  { name: "Connections", question: "What unexpected connections sustain your research, and how do you cultivate relationships between elements that seem unrelated at first glance?",
+    description: "Unexpected connection and relation — links cultivated between elements that seem unrelated, drawing together disparate fields, materials, or ideas. Association, networks, constellation, juxtaposition, relational thinking, and correspondence found across difference." },
+  { name: "Bodies",      question: "How does your body participate in your research process, and what kinds of knowledge become available through embodied experience?",
+    description: "The body's participation in research — embodied knowledge, gesture, movement, sensation, and the physical, felt dimensions of practice. Somatic experience, kinaesthesia, tacit bodily knowing, and understanding available only through the body." },
+  { name: "Perspective", question: "From which position do you usually observe your work, and what becomes visible when you shift that point of view?",
+    description: "Perspective, positionality, and point of view — the vantage from which a practice is observed and what shifting that position makes newly visible. Standpoint, reframing, the observer's location, changing scale or angle, and reflexivity about one's own viewpoint." },
+  { name: "Moving",      question: "What moves in your practice—materially, emotionally, conceptually—and how does movement generate new questions?",
+    description: "Movement as an animating force — material, emotional, or conceptual motion and how it generates new questions. Flow, flux, transformation over time, being moved and moving others, and process understood as continuous change rather than fixed outcome." },
+  { name: "Transition",  question: "How do you inhabit moments of passage in your research, and what do you learn from what is not yet settled?",
+    description: "Transition, passage, and the in-between — thresholds, liminal states, and what is not yet settled. Becoming, the interval, moments of passage, unfinishedness, and knowledge drawn from states of change before resolution." },
+  { name: "Tool",        question: "Which tool—material, conceptual, technological, or relational—has most transformed your way of knowing, and how has it shaped the questions you are able to ask?",
+    description: "Tools and instruments — material, conceptual, technological, or relational — and how a chosen tool transforms a way of knowing and shapes the questions that can be asked. Instruments, apparatus, technique, mediation, and the agency of tools in producing knowledge." },
+];
+
 // ── Network helpers ───────────────────────────────────────────────────────────
 
 // All edge functions live next to each other; derive a sibling function's URL
@@ -1197,6 +1227,19 @@ export default function App() {
     localStorage.setItem("rc_custom_cats", JSON.stringify(updated));
   };
 
+  // Add a lens preset as a normal custom category and activate it. Uses a stable
+  // id ("lens:<name>") so adding is idempotent; once added it appears among the
+  // saved chips (toggle/delete) and drops out of the preset row below.
+  const addLensPreset = (preset) => {
+    const id = "lens:" + preset.name;
+    if (!customCats.some(c => c.id === id)) {
+      const updated = [...customCats, { id, name: preset.name, description: preset.description }];
+      setCustomCats(updated);
+      localStorage.setItem("rc_custom_cats", JSON.stringify(updated));
+    }
+    setActiveCustomCatIds(prev => { const next = new Set(prev); next.add(id); return next; });
+  };
+
   const generateSchema = async () => {
     if (!schemaDoc || !semanticUrl) return;
     setSchemaGenerating(true);
@@ -1876,6 +1919,24 @@ export default function App() {
                           </span>
                         );
                       })}
+                    </div>
+                  )}
+                  {LENS_PRESETS.some(p => !customCats.some(c => c.id === "lens:" + p.name)) && (
+                    <div className="lens-presets">
+                      <span className="lens-presets-label"
+                        title="Ten reflective 'lenses' from the RC / COST Action 'Artistic Intelligence' Training School (exposition 4667244). Each adds a cross-cutting semantic re-ranker.">
+                        Lenses ↴
+                      </span>
+                      <div className="filter-chips">
+                        {LENS_PRESETS
+                          .filter(p => !customCats.some(c => c.id === "lens:" + p.name))
+                          .map(p => (
+                            <button key={p.name} className="filter-chip lens-preset-chip"
+                              onClick={() => addLensPreset(p)} title={p.description}>
+                              + {p.name}
+                            </button>
+                          ))}
+                      </div>
                     </div>
                   )}
                   {!showCustomCatForm ? (
