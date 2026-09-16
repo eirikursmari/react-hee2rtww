@@ -3,6 +3,66 @@
 Dated narrative of what changed and why. `CLAUDE.md` holds the distilled current
 state; this file holds the story. Newest entries at the top.
 
+## 2026-09-16 — RC/KOBI interoperability, lens presets, deadline retired
+
+**Deadline retired.** There is no longer a fixed 12 September 2026 presentation
+date; the project continues as an ongoing research tool. Scrubbed the deadline
+from `CLAUDE.md` (intro + the security note) and left a one-line note that the
+date is retired.
+
+**Analysed RC's own tooling against ours**, prompted by exposition **4667244** —
+the COST Action "Artistic Intelligence" Training School (Daniele Pozzi + ~20
+coauthors, Rome Fine Arts Academy, June 2026; WG3 "Reference Frameworks"). Worked
+from the exposition's full RCdata JSON and from screenshots of the live
+`map.rcdata.org` interface (both hosts are egress-blocked in the build
+environment, so nothing could be fetched directly).
+
+- **RCdata Search** is pure metadata string-match (title/author/keyword/abstract
+  + portal/status/date) — no semantic layer, no content facet. A weaker retrieval
+  model than ours by design.
+- **Keyword Map** is a flat, uncontrolled folksonomy of **~11,005** author tags.
+  Its genuine head independently reproduces our `research_themes` (sound, voice,
+  dance, embodiment, memory, …) — a *third* human corroboration of the
+  BERTopic-derived vocabulary (after the corpus itself and the 4667244 blackboard
+  cloud).
+- **Folksonomy-pollution finding.** Below the head sits an unnatural plateau of
+  ~40 terms at an identical ~59–61 count — self-referential author epithets
+  (`dorian vale`, `founder of post-interpretive criticism`, `custodian of witness
+  aesthetics`, …) plus coined neologisms (`hauntmark theory`, `aesthetic
+  recursion`, …). Almost certainly one contributor stuffing a fixed tag-set
+  across ~60 works (≈2,400 tag instances). Inference from the pattern; checkable
+  by filtering the Keyword Map to `dorian vale`. It's the clearest empirical
+  argument for a curated, corpus-derived vocabulary over an open folksonomy.
+- **KOBI** ("Knowledge Universe" lemma-graph, AR constellation view) ≈ our
+  authority-file mapping + pgvector similarity, but manual/intentional vs.
+  automatic/inferred. KOBI internals stay marked **inferred** — unverified.
+
+**Seed docs written** (toward the technical report):
+- `docs/rc-crosswalk.md` — the 16-value `research_themes` ↔ RC folksonomy bridge
+  (7 direct / 2 partial / 1 weak / 6 tail-only), the discipline/method/noise
+  orphans the schema excludes, and the pollution cluster.
+- `docs/rc-kobi-comparison.md` — the three-tool comparison (RCdata / KOBI / us) on
+  a divergent-serendipity → convergent-verify axis, point-by-point table,
+  interoperability plan, and an explicit auditability §0 (verified vs. inferred).
+
+**Shipped: the ten reflective lenses as search presets.** Recovered the exact
+lens wording from 4667244 (Resonance, Ambiguity, Locality, Transfer, Connections,
+Bodies, Perspective, Moving, Transition, Tool) and wired them into the Custom
+semantic categories panel as one-click preset chips (`LENS_PRESETS` in
+`src/App.js`, styles in `src/style.css`). Design decision: each lens's original
+second-person *workshop question* is kept as the chip tooltip, but the embedded
+`description` is rewritten **declaratively** so it matches against third-person
+exposition prose/abstracts/image-text (the query side, not extraction). A preset
+becomes a normal custom category (stable `lens:<name>` id, persisted, toggleable,
+deletable) and drops out of the preset row once added. They **re-rank** via the
+existing 50/50 blend in the `search` function — no backend change, no
+edge-function redeploy. Verified with `CI=false` and `CI=true` production builds.
+
+**Merge/deploy.** PR #10 → `main` (rebased onto latest `main` first, since the
+`claude/docs-review-qbbjh9` branch name had been reused through PRs #4–#9). Two
+red **Vercel** checks were noise — this project deploys to **GitHub Pages**, not
+Vercel; the "Deploy to GitHub Pages" workflow ran green on the merge commit.
+
 ## 2026-09-02 — Multimodal micro-pilot (validated end-to-end)
 
 Validated the image pipeline (`rc_multimodal.py` → `load_multimodal.py`) end to

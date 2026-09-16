@@ -1,11 +1,13 @@
 # Excavating Artistic Research — project brief
 
 AI/RAG search-and-analysis tool over the **Research Catalogue** (RC,
-researchcatalogue.net) corpus of ~6,671 artistic-research expositions. Built for
-a presentation on **12 September 2026**. This file is the durable state so a
-fresh session starts up to speed — keep it concise; update it when a decision or
-milestone lands, not on a clock. Put dated narrative in `docs/worklog.md`, not
-here.
+researchcatalogue.net) corpus of ~6,671 artistic-research expositions. This file
+is the durable state so a fresh session starts up to speed — keep it concise;
+update it when a decision or milestone lands, not on a clock. Put dated narrative
+in `docs/worklog.md`, not here.
+
+(There is no fixed deadline; the 12 September 2026 presentation date is retired.
+Work continues as an ongoing research tool.)
 
 ## Architecture
 
@@ -140,12 +142,26 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
   ~1.1k, not the full corpus) while impact/SDG span ~3.6k — mind the differing
   denominators, or use the peer-reviewed scope for a clean one. (A clean fix
   later: finish extracting or clear the remaining non-peer-reviewed rows.)
+- **RC / KOBI interoperability + lens presets** (2026-09-16): compared RC's own
+  tooling — the RCdata metadata search (`map.rcdata.org`), the ~11k-term keyword
+  folksonomy, and the KOBI referencing "Knowledge Universe" — against our layers,
+  read through exposition **4667244** (the COST Action "Artistic Intelligence"
+  Training School). Two seed docs landed: `docs/rc-crosswalk.md` (the 16-value
+  `research_themes` ↔ RC folksonomy vocabulary bridge, including the
+  single-contributor folksonomy-pollution finding) and `docs/rc-kobi-comparison.md`
+  (the full three-tool comparison — KOBI-internals claims marked *inferred*, since
+  the hosts are egress-blocked). Also shipped the ten reflective **lenses** from
+  4667244 (Resonance, Ambiguity, Locality, Transfer, Connections, Bodies,
+  Perspective, Moving, Transition, Tool) as one-click custom-category presets in
+  the search UI (`LENS_PRESETS` in `src/App.js`) — they re-rank via the existing
+  50/50 blend in the `search` function, so **no backend change** was needed.
 
 ## Pending / open
 
 - **Technical report** covering what's been built (later — this file is its seed;
   `docs/status-and-feasibility.md` and `docs/excavating-artistic-research-overview.md`
-  are drafts toward it).
+  are drafts toward it, and `docs/rc-kobi-comparison.md` + `docs/rc-crosswalk.md`
+  seed the "vs. RC's own tooling / interoperability" section).
 - **~169 extracted-but-empty rows**: carry an `extracted_at` but an empty
   `research_approach` (extracted before, returned nothing). They're the gap
   between the analytics "pending" count (~397, keyed off `research_approach`) and
@@ -161,7 +177,8 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
   validation study.
 - **Security**: the Supabase `service_role` key was pasted in chat earlier and
   has not been rotated. Rotating regenerates all project keys (disruptive) —
-  worth doing before the presentation, timed deliberately.
+  still worth doing; time it deliberately on a stable connection (update
+  `~/rc-keys.env`, re-set the edge-function secrets, redeploy).
 
 ## Conventions
 
