@@ -112,9 +112,16 @@ python3 pipeline/pipeline.py --extract-only --pending-only --model claude-sonnet
 # Frontend
 CI=false npm run build
 
-# Deploy an edge function
+# Manual edge function deploy (fallback only — see auto-deploy note below)
 npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmralkmylmkeesblvj
 ```
+
+**Deploys are now automatic** (since 2026-09-18): pushing to `main` triggers
+`.github/workflows/deploy.yml` (frontend → GitHub Pages) and
+`.github/workflows/deploy-functions.yml` (all 6 edge functions, whenever
+`supabase/functions/**` changed) via a `SUPABASE_ACCESS_TOKEN` repo secret.
+The manual command above is now only a fallback for a broken Action or a
+one-off out-of-band deploy — no need to SSH into the server after a merge.
 
 ## Full re-extraction runbook (completed 2026-09-01; kept as reference)
 
@@ -187,8 +194,12 @@ npx supabase@latest functions deploy <name> --no-verify-jwt --project-ref tnxmra
 
 ## Conventions
 
-- **Develop on branch `claude/rag-research-catalogue-interface-HTls8`.** Not
-  `main`.
+- **Merge to `main` directly once work is verified** (production build passes
+  for App.js changes; no known regressions). No standing feature branch — the
+  old `claude/rag-research-catalogue-interface-HTls8` convention is retired
+  (that branch diverged from `main` for weeks and had to be reconciled back in
+  on 2026-09-18; don't recreate that split). Still ask first for anything
+  destructive, ambiguous, or explicitly flagged as needing review.
 - Migrations are hand-run in the Supabase SQL editor (files in `pipeline/*.sql`,
   idempotent). No automated migration runner.
 - **No secrets in the repo.** Keys live in `~/rc-keys.env` on the server.
