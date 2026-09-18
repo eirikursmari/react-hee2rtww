@@ -438,10 +438,27 @@ a:hover {
   border: 1px solid #bbb;
   font-size: 9px;
   color: #999;
-  cursor: help;
+  cursor: pointer;
   vertical-align: middle;
   margin-left: 3px;
   font-style: normal;
+  background: none;
+  padding: 0;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.filter-tip-icon:hover {
+  border-color: #888;
+  color: #666;
+}
+
+.filter-tip-text {
+  font-size: 12px;
+  color: #777;
+  line-height: 1.5;
+  font-style: italic;
+  margin: -2px 0 2px;
 }
 
 .filter-bar {

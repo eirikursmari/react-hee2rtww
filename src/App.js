@@ -914,6 +914,8 @@ export default function App() {
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
+  // Which filter-category "?" tip is currently expanded (one at a time; click again to close).
+  const [openTip,           setOpenTip]           = useState(null);
   const [showAbout,         setShowAbout]         = useState(() => localStorage.getItem("rc_about_collapsed") !== "1");
   const [savedCategories,  setSavedCategories]   = useState(() => {
     try { return JSON.parse(localStorage.getItem("rc_categories") || "[]"); } catch { return []; }
@@ -1878,7 +1880,13 @@ export default function App() {
                 </p>
                 {filterOptions.filter(f => f.values.length > 0).map(({ label, key, tip, values }) => (
                   <div key={key} className="filter-group">
-                    <span className="filter-group-label" title={tip}>{label} <span className="filter-tip-icon" title={tip}>?</span></span>
+                    <span className="filter-group-label">
+                      {label}{" "}
+                      <button type="button" className="filter-tip-icon" title={tip}
+                        aria-expanded={openTip === key} aria-label={`About ${label}`}
+                        onClick={() => setOpenTip(openTip === key ? null : key)}>?</button>
+                    </span>
+                    {openTip === key && <p className="filter-tip-text">{tip}</p>}
                     <div className="filter-chips">
                       {values.map(val => {
                         const active = (filters[key] || []).includes(val);
@@ -1918,10 +1926,16 @@ export default function App() {
                   </div>
                 )}
                 <div className="filter-group custom-cat-section">
-                  <span className="filter-group-label"
-                    title="Define categories in plain language. The search engine embeds your description and finds semantically similar expositions — even if they use different words.">
-                    Custom semantic categories <span className="filter-tip-icon">?</span>
+                  <span className="filter-group-label">
+                    Custom semantic categories{" "}
+                    <button type="button" className="filter-tip-icon"
+                      title="Define categories in plain language. The search engine embeds your description and finds semantically similar expositions — even if they use different words."
+                      aria-expanded={openTip === "custom-cats"} aria-label="About custom semantic categories"
+                      onClick={() => setOpenTip(openTip === "custom-cats" ? null : "custom-cats")}>?</button>
                   </span>
+                  {openTip === "custom-cats" && (
+                    <p className="filter-tip-text">Define categories in plain language. The search engine embeds your description and finds semantically similar expositions — even if they use different words.</p>
+                  )}
                   {customCats.length > 0 && (
                     <div className="filter-chips">
                       {customCats.map(cat => {
