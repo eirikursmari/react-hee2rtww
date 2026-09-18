@@ -23,7 +23,7 @@ const FIELDS = "created_at,published_in,research_approach,artistic_medium," +
 // so any theme/reach trend must be computed and denominated over this subset.
 const PEER_REVIEWED_VENUE_PHRASES = [
   "sonic studies",                              // Journal of Sonic Studies
-  "journal for artistic research",              // Journal for Artistic Research (JAR)
+  "journal for artistic research",              // Journal for Artistic Research (JAR + ARJAZZ)
   "ruukku",                                     // RUUKKU – Studies in Artistic Research
   "nordic journal for artistic research",       // VIS – Nordic Journal for Artistic Research
   "journal of research in art, design and society", // HUB
@@ -40,6 +40,14 @@ function isPeerReviewed(row: any): boolean {
     if (PEER_REVIEWED_VENUE_PHRASES.some((p) => low.includes(p))) return true;
   }
   return false;
+}
+
+// True if a single published_in NAME (not a whole row) is itself a
+// peer-reviewed venue — used to drop stray institutional-portal tags that
+// ride along on an otherwise peer-reviewed row's multi-valued published_in.
+function isPeerVenue(name: string): boolean {
+  const low = String(name || "").toLowerCase();
+  return PEER_REVIEWED_VENUE_PHRASES.some((p) => low.includes(p));
 }
 
 async function fetchAllExpositions(supabaseUrl: string, headers: Record<string, string>) {
@@ -172,8 +180,12 @@ function buildStats(rows: any[], scope = "all"): string {
       return `  ${y} (n=${rs.length}): ${top || "—"}`;
     }).join("\n");
 
-  // Research themes by peer-reviewed journal
-  const prJournals = dist(prRows, "published_in", true).slice(0, 8).map(([k]) => k);
+  // Research themes by peer-reviewed journal — restricted to venue names that
+  // are themselves peer-reviewed (isPeerVenue), not just the top-8 published_in
+  // values by frequency, which pulled in institutional-portal tags riding along
+  // on the same peer-reviewed rows' multi-valued published_in arrays.
+  const prJournals = dist(prRows, "published_in", true)
+    .map(([k]) => k).filter(isPeerVenue);
   const themesByJournal = prJournals.map((j) => {
     const jRows = prRows.filter((r) => Array.isArray(r.published_in) && r.published_in.includes(j));
     const top = dist(jRows, "research_themes", true).slice(0, 8).map(([k, v]) => `${k}(${v})`).join(", ");
