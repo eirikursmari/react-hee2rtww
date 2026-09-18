@@ -11,6 +11,12 @@ fetchable, RC-hosted images — then:
   • projects vision-call volume    = Σ fetchable_images over the cohort
   • estimates API cost and wall-clock time for the rescue
 
+The same machinery also sizes a full multimodal ENRICHMENT pass (every
+image-bearing exposition, not just text-sparse ones) — set --max-words very
+high to disable the sparseness filter; see the last two usage examples below.
+Add --peer-reviewed to scope either mode to the ~889 peer-reviewed journal
+expositions instead of the whole corpus.
+
 Measuring is FREE: only RC snapshot fetches, no OpenAI/Anthropic calls.
 
 Usage
@@ -23,6 +29,17 @@ Usage
 
     # Tune the sparseness threshold:
     python3 pipeline/scope_rescue.py --max-words 500
+
+    # Size the sparse-text RESCUE cohort within the ~889 peer-reviewed
+    # expositions only (still applies --max-words; narrower than "all of them"):
+    python3 pipeline/scope_rescue.py --peer-reviewed --full --out output/pr_rescue_cohort.jsonl
+
+    # Size a FULL multimodal ENRICHMENT of the peer-reviewed set instead — every
+    # image-bearing exposition among the 889, regardless of how much prose it
+    # already has. Set --max-words absurdly high so the sparseness filter never
+    # excludes a text-rich-but-image-bearing exposition:
+    python3 pipeline/scope_rescue.py --peer-reviewed --max-words 999999999 \\
+        --full --out output/pr_enrichment_cohort.jsonl
 
 Environment
 -----------
@@ -43,6 +60,7 @@ from supabase import create_client
 # Reuse the canonical text extraction and media parsing already in the pipeline.
 from backfill_wordcount import extract_text
 from rc_inventory import parse_media_blocks
+from pipeline import fetch_all_expositions_from_db, is_peer_reviewed
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -105,6 +123,12 @@ def already_rescued_ids(sb) -> set[int]:
     return {r["exposition_id"] for r in rows}
 
 
+def peer_reviewed_exposition_ids(sb) -> list[int]:
+    """Ids matching the same venue-phrase rule as pipeline.is_peer_reviewed()."""
+    rows = fetch_all_expositions_from_db(sb, "id,published_in")
+    return [r["id"] for r in rows if is_peer_reviewed(r.get("published_in"))]
+
+
 # ── Per-exposition measurement ────────────────────────────────────────────────
 def measure(expo_id: int, session) -> tuple[int, int] | None:
     """Return (text_word_count, fetchable_image_count) or None on fetch failure."""
@@ -134,6 +158,9 @@ def main() -> None:
                     help="With --full: write the cohort work-list JSONL here")
     ap.add_argument("--delay", type=float, default=0.15,
                     help="Seconds between RC fetches (default 0.15)")
+    ap.add_argument("--peer-reviewed", action="store_true",
+                    help="Scope to the peer-reviewed journal subset only (~889 expositions), "
+                         "instead of the whole corpus")
     args = ap.parse_args()
 
     for var in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY"):
@@ -141,8 +168,8 @@ def main() -> None:
             sys.exit(f"{var} not set")
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
-    log.info("Loading exposition ids…")
-    ids = all_exposition_ids(sb)
+    log.info("Loading exposition ids%s…", " (peer-reviewed only)" if args.peer_reviewed else "")
+    ids = peer_reviewed_exposition_ids(sb) if args.peer_reviewed else all_exposition_ids(sb)
     rescued = already_rescued_ids(sb)
     todo = [i for i in ids if i not in rescued]
     total = len(todo)
@@ -207,6 +234,8 @@ def main() -> None:
     print("\n" + "═" * 64)
     print("  MULTIMODAL RESCUE — SCOPING REPORT")
     print("═" * 64)
+    print(f"  Scope: {'peer-reviewed journals only' if args.peer_reviewed else 'whole corpus'} "
+          f"({len(ids)} indexed, not-yet-rescued or otherwise)")
     print(f"  Candidate expositions (not yet rescued): {total}")
     print(f"  Sparseness threshold: < {args.max_words} words AND ≥ 1 fetchable image")
     print(f"  Basis: {scope}")
