@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
   }
 
   const question = (body?.question as string) || "";
-  const model    = (body?.model as string) || "claude-sonnet-4-6";
+  const model    = (body?.model as string) || "claude-sonnet-5";
   const history  = (body?.history as { q: string; a: string }[]) || [];
   const scope    = (body?.scope as string) || "all";
   if (!question?.trim()) return Response.json({ error: "question is required" }, { status: 400, headers: CORS });

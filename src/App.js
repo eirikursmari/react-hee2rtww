@@ -7,9 +7,9 @@ const RC_CONTENT_URL = "https://map.rcdata.org/rcjson/expo";
 const CORS_PROXY     = "https://corsproxy.io/?";
 
 const MODELS = [
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5",  note: "fastest · lowest cost" },
-  { id: "claude-sonnet-4-6",         label: "Sonnet 4.6", note: "balanced"              },
-  { id: "claude-opus-4-7",           label: "Opus 4.7",   note: "most capable"         },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "fastest · lowest cost" },
+  { id: "claude-sonnet-5",           label: "Sonnet 5",  note: "balanced"              },
+  { id: "claude-opus-5",             label: "Opus 5",    note: "most capable"         },
 ];
 const DEEP_LIMIT     = 5;
 const DEEP_TEXT_MAX  = 2500;
@@ -588,6 +588,13 @@ const isPeerReviewedRow = (row) => {
     return PEER_REVIEWED_VENUE_PHRASES.some((p) => s.includes(p));
   });
 };
+// True if a single published_in NAME (not a whole row) is itself a
+// peer-reviewed venue — used to drop stray institutional-portal tags that ride
+// along on an otherwise peer-reviewed row's multi-valued published_in array.
+const isPeerVenue = (name) => {
+  const s = String(name && typeof name === "object" ? name.name || "" : name || "").toLowerCase();
+  return PEER_REVIEWED_VENUE_PHRASES.some((p) => s.includes(p));
+};
 const PR_ONLY_DIMS = new Set(["research_themes", "relevance_reach"]);
 
 // Corpus Analytics scope — which slice of the database a question/chart is about.
@@ -599,10 +606,16 @@ const ANALYTICS_SCOPES = [
   { key: "peer_reviewed", label: "Peer-reviewed journals", filter: isPeerReviewedRow },
 ];
 
-const dimValuesOf = (row, dim) => {
+// `scoped` = true when the rows being aggregated are already restricted to the
+// peer-reviewed subset. In that case, the published_in dimension is filtered
+// down to names that are themselves peer-reviewed venues, dropping stray
+// institutional-portal tags that ride along on the same peer-reviewed rows'
+// multi-valued published_in array (e.g. a Konstfack cross-listing).
+const dimValuesOf = (row, dim, scoped = false) => {
   const v = row?.[dim.key];
-  if (dim.arr) return Array.isArray(v) ? v.filter(Boolean) : [];
-  return v ? [String(v)] : [];
+  let vals = dim.arr ? (Array.isArray(v) ? v.filter(Boolean) : []) : (v ? [String(v)] : []);
+  if (scoped && dim.key === "published_in") vals = vals.filter(isPeerVenue);
+  return vals;
 };
 
 const yearOf = (row) => {
@@ -693,22 +706,22 @@ const DIM_OPTIONS = [
 ];
 
 // Unified value-getter across every corpus dimension.
-function getValues(row, dimKey) {
+function getValues(row, dimKey, scoped = false) {
   if (dimKey === "sdg")  return sdgLabelsOf(row);
   if (dimKey === "year") { const y = yearOf(row); return y ? [y] : []; }
   const d = BREAKDOWN_DIMS.find((x) => x.key === dimKey);
-  return d ? dimValuesOf(row, d) : [];
+  return d ? dimValuesOf(row, d, scoped) : [];
 }
 
 const dimLabel   = (key) => (DIM_OPTIONS.find((d) => d.key === key) || {}).label || key;
 const truncLabel = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
 
 // Cross-tabulate two dimensions → { rowLabels, colLabels, matrix, max }.
-function crossTab(rows, dimA, dimB, topN = 10, topM = 8) {
+function crossTab(rows, dimA, dimB, topN = 10, topM = 8, scoped = false) {
   // Year is a temporal axis: show every year in chronological order rather than
   // the top-N by frequency, so a themes×year cross-tab reads left→right in time.
   const axisLabels = (dim, cap) => {
-    const counted = countValues(rows, (r) => getValues(r, dim));
+    const counted = countValues(rows, (r) => getValues(r, dim, scoped));
     return dim === "year"
       ? counted.map((x) => x[0]).sort((a, b) => +a - +b)
       : counted.slice(0, cap).map((x) => x[0]);
@@ -719,8 +732,8 @@ function crossTab(rows, dimA, dimB, topN = 10, topM = 8) {
   const cIdx = new Map(colLabels.map((l, i) => [l, i]));
   const matrix = rowLabels.map(() => colLabels.map(() => 0));
   for (const r of rows) {
-    const as = getValues(r, dimA).filter((a) => rIdx.has(a));
-    const bs = getValues(r, dimB).filter((b) => cIdx.has(b));
+    const as = getValues(r, dimA, scoped).filter((a) => rIdx.has(a));
+    const bs = getValues(r, dimB, scoped).filter((b) => cIdx.has(b));
     for (const a of as) for (const b of bs) matrix[rIdx.get(a)][cIdx.get(b)] += 1;
   }
   const max = Math.max(1, ...matrix.flat());
@@ -778,7 +791,7 @@ export default function App() {
   const [deepSearch,       setDeepSearch]       = useState(() => localStorage.getItem("rc_deep_search") === "1");
   const [useSemanticSearch,setUseSemanticSearch] = useState(() => localStorage.getItem("rc_use_semantic") !== "0");
   const [resultLimit,      setResultLimit]       = useState(() => Number(localStorage.getItem("rc_result_limit")) || 10);
-  const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-4-6");
+  const [modelId,          setModelId]           = useState(() => localStorage.getItem("rc_model") || "claude-sonnet-5");
   const [filters,          setFilters]           = useState({});
   const [analyticsQ,            setAnalyticsQ]            = useState("");
   const [analyticsConversation, setAnalyticsConversation] = useState([]);
@@ -851,8 +864,8 @@ export default function App() {
   }, [scopedRows, explSdg]);
   const breakdownData = useMemo(() => {
     const dim = BREAKDOWN_DIMS.find((d) => d.key === explDim) || BREAKDOWN_DIMS[0];
-    return countValues(explSubset, (r) => dimValuesOf(r, dim)).slice(0, 15);
-  }, [explSubset, explDim]);
+    return countValues(explSubset, (r) => dimValuesOf(r, dim, scopeIsSubset)).slice(0, 15);
+  }, [explSubset, explDim, scopeIsSubset]);
   const trendData = useMemo(
     () => countValues(explSubset, (r) => { const y = yearOf(r); return y ? [y] : []; })
             .sort((a, b) => +a[0] - +b[0]),
@@ -870,30 +883,34 @@ export default function App() {
     () => {
       if (!scopedRows || bType !== "bar") return [];
       const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
-      return countValues(base, (r) => getValues(r, bDim)).slice(0, 20);
+      const scoped = base === peerReviewedRows || scopeIsSubset;
+      return countValues(base, (r) => getValues(r, bDim, scoped)).slice(0, 20);
     },
-    [scopedRows, peerReviewedRows, bType, bDim]);
+    [scopedRows, peerReviewedRows, scopeIsSubset, bType, bDim]);
   const builderValueOptions = useMemo(
     () => {
       if (!scopedRows) return [];
       const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
-      return countValues(base, (r) => getValues(r, bDim)).slice(0, 40).map((x) => x[0]);
+      const scoped = base === peerReviewedRows || scopeIsSubset;
+      return countValues(base, (r) => getValues(r, bDim, scoped)).slice(0, 40).map((x) => x[0]);
     },
-    [scopedRows, peerReviewedRows, bDim]);
+    [scopedRows, peerReviewedRows, scopeIsSubset, bDim]);
   const builderTrend = useMemo(() => {
     if (!scopedRows || bType !== "trend") return [];
     const base = PR_ONLY_DIMS.has(bDim) ? peerReviewedRows : scopedRows;
+    const scoped = base === peerReviewedRows || scopeIsSubset;
     const subset = bValue === "__all__" ? base
-      : base.filter((r) => getValues(r, bDim).includes(bValue));
+      : base.filter((r) => getValues(r, bDim, scoped).includes(bValue));
     return countValues(subset, (r) => { const y = yearOf(r); return y ? [y] : []; })
              .sort((a, b) => +a[0] - +b[0]);
-  }, [scopedRows, peerReviewedRows, bType, bDim, bValue]);
+  }, [scopedRows, peerReviewedRows, scopeIsSubset, bType, bDim, bValue]);
   const builderHeat = useMemo(() => {
     if (!scopedRows || bType !== "heatmap") return null;
     const d2 = bDim2 !== bDim ? bDim2 : (DIM_OPTIONS.find((d) => d.key !== bDim) || {}).key;
     const base = (PR_ONLY_DIMS.has(bDim) || PR_ONLY_DIMS.has(d2)) ? peerReviewedRows : scopedRows;
-    return crossTab(base, bDim, d2);
-  }, [scopedRows, peerReviewedRows, bType, bDim, bDim2]);
+    const scoped = base === peerReviewedRows || scopeIsSubset;
+    return crossTab(base, bDim, d2, 10, 8, scoped);
+  }, [scopedRows, peerReviewedRows, scopeIsSubset, bType, bDim, bDim2]);
   const [showInfoKeyword,   setShowInfoKeyword]   = useState(false);
   const [showInfoSemantic,  setShowInfoSemantic]  = useState(false);
   const [showInfoAnalytics, setShowInfoAnalytics] = useState(false);
