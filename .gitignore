@@ -3,3 +3,5 @@ build
 pipeline/.env
 .env__pycache__/
 *.pyc
+pipeline/output/
+output/
