@@ -3,6 +3,43 @@
 Dated narrative of what changed and why. `CLAUDE.md` holds the distilled current
 state; this file holds the story. Newest entries at the top.
 
+## 2026-09-18 — Full multimodal enrichment: cohort sized, capped-cost tool added
+
+Sized a full multimodal enrichment of the peer-reviewed corpus (not just the
+sparse-text rescue cohort) ahead of deciding whether to run it.
+
+**Tooling added.** `scope_rescue.py` gained `--peer-reviewed` (scope the free
+sizing report to the ~889 peer-reviewed expositions via a new
+`peer_reviewed_exposition_ids()`, reusing `pipeline.is_peer_reviewed()` +
+`pipeline.fetch_all_expositions_from_db()`) and documented that pairing it
+with an absurdly high `--max-words` disables the sparseness filter, sizing a
+full enrichment instead of just the rescue cohort. Added
+`pipeline/peer_reviewed_ids.py` (writes the 889 ids as the `{"rc_id": ...}`
+JSONL `rc_inventory.py` expects) and `pipeline/cap_cost.py` (recomputes cost
+from an already-fetched cohort file with a real `--max-images` cap applied —
+see below for why that matters).
+
+**Measured, full scan** (`--peer-reviewed --max-words 999999999 --full`, ~3.5
+min on the server): of 889 peer-reviewed expositions, **805 are image-bearing**;
+**26,649 fetchable images total (uncapped)**, mean **33.1**/median **13** per
+exposition. Uncapped cost: Opus $654.42 / Sonnet $398.59 / Haiku $142.76;
+~29.6h wall-clock.
+
+**This is far denser than the earlier 10-exposition pilot's 6.4 images/exposition
+average** — expected in hindsight, since the peer-reviewed set includes the
+visual- and sonic-arts journals (VIS, RUUKKU, Journal of Sonic Studies), not a
+general corpus spread.
+
+**The uncapped number overstates real cost.** `rc_multimodal.py` caps at
+`--max-images` (default 8) per exposition; the median exposition here already
+has 13, well over that. `cap_cost.py` re-derives the true capped total from
+the saved cohort file (`output/pr_enrichment_cohort.jsonl`) with zero network
+calls, so the real cost at the default cap — or any other cap — can be checked
+instantly before committing spend.
+
+**Status: not yet run.** Next step is deciding a describe model and
+`--max-images` value from the capped numbers, not the uncapped ceiling above.
+
 ## 2026-09-16 — RC/KOBI interoperability, lens presets, deadline retired
 
 **Deadline retired.** There is no longer a fixed 12 September 2026 presentation

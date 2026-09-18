@@ -183,8 +183,18 @@ one-off out-of-band deploy — no need to SSH into the server after a merge.
 - **Multimodal**: pipeline validated end-to-end via a 10-exposition micro-pilot
   (2026-09-02) — describe/OCR → facet → embed → live search, ~$0.12/exposition
   at 8 images; showcase recovery = exposition 2064153 (Corelli/Roman-trumpets,
-  text recovered from scanned title pages). Full rescue run still deferred: size
-  the cohort with `scope_rescue.py` first.
+  text recovered from scanned title pages).
+  **Full-enrichment cohort sized (2026-09-18)**: `scope_rescue.py --peer-reviewed
+  --max-words 999999999 --full` over all 889 peer-reviewed expositions found
+  805 image-bearing, **26,649 fetchable images uncapped** (mean 33.1, median
+  13/exposition — far denser than the 10-exposition pilot's 6.4 average; the
+  peer-reviewed journals include the visual/sonic-arts ones). Uncapped cost:
+  Opus $654 / Sonnet $399 / Haiku $143; ~30h wall-clock. Since `rc_multimodal.py`
+  caps at 8 images/exposition by default and the median already exceeds that,
+  the real capped cost is materially lower — `pipeline/cap_cost.py` recomputes
+  it instantly from the saved cohort file (`output/pr_enrichment_cohort.jsonl`)
+  without re-fetching. Run that before deciding on a describe model or
+  `--max-images` value; the full run itself is still not started.
 - Deferred: BERTopic prototype done for vocabulary; full multimodal rescue run;
   validation study.
 - **Security**: the Supabase `service_role` key was pasted in chat earlier and
