@@ -680,6 +680,35 @@ a:hover {
   color: #999;
 }
 
+@media (prefers-color-scheme: dark) {
+  .filter-section { border-color: #333; }
+  .filter-section-header,
+  .filter-section-header:has(+ .filter-panel) { background: #1a1a1a; border-bottom-color: #333; }
+  .filter-active-count { color: #ddd; }
+  .filter-clear-inline { background: #222; border-color: #444; color: #999; }
+  .filter-cats-label { color: #999; }
+  .saved-cat-chip { background: #222; border-color: #eee; color: #eee; }
+  .filter-panel { background: #141414; }
+  .filter-panel-note { color: #999; border-bottom-color: #2a2a2a; }
+  .filter-group-label { color: #999; }
+  .filter-tip-icon { border-color: #555; color: #999; }
+  .filter-tip-icon:hover { border-color: #888; color: #ccc; }
+  .filter-tip-text { color: #aaa; }
+  .filter-chip { background: #222; border-color: #444; color: #ccc; }
+  .filter-chip-active { background: #eee; border-color: #eee; color: #111; }
+  .saved-cat-delete { background: #222; border-color: #444; color: #777; }
+  .filter-save-row { border-top-color: #2a2a2a; }
+  .filter-save-input { background: #222; border-color: #444; color: #eee; }
+  .filter-save-btn { background: #eee; border-color: #eee; color: #111; }
+  .filter-save-btn:disabled { background: #333; border-color: #333; color: #777; }
+  .custom-cat-section { border-top-color: #2a2a2a; }
+  .custom-cat-add-btn { background: #222; border-color: #555; color: #bbb; }
+  .lens-presets-label { color: #999; }
+  .lens-preset-chip { color: #bbb; }
+  .custom-cat-desc { background: #222; border-color: #444; color: #eee; }
+  .custom-cat-note { color: #777; }
+}
+
 /* ── Schema upload ── */
 
 .schema-upload-row {
