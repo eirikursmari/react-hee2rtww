@@ -1124,8 +1124,21 @@ export default function App() {
         headers: { "Content-Type": "application/json", "x-app-key": appKey },
         body: JSON.stringify({ question: currentQ, model: modelId, history: analyticsConversation, scope: analyticsScope }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON body, e.g. a raw gateway error page */ }
+      if (!res.ok) {
+        // Supabase's edge gateway enforces a ~150s response limit; a long
+        // multi-continuation answer (esp. with Opus) can exceed it and gets
+        // killed before our own function can return its usual {error} JSON —
+        // the gateway's own timeout response has neither that shape nor a
+        // statusText (HTTP/2 responses never carry one), so without this the
+        // user sees a blank "Analytics error:" with no indication why.
+        const isTimeout = [504, 522, 524].includes(res.status);
+        const detail = data.error || res.statusText || `HTTP ${res.status}`;
+        throw new Error(isTimeout
+          ? `Request timed out (${detail}) — the answer was likely taking too long to generate (common with Opus on long conversations). Try Sonnet or Haiku, or ask a narrower question.`
+          : detail);
+      }
       setAnalyticsConversation(prev => [...prev, { q: currentQ, a: data.answer }]);
       if (data.total) setCorpusTotal(data.total);
     } catch (err) {
